@@ -6,7 +6,7 @@ Record how a process's address space evolves, as JSON.
 back, and reconstructs the address space they describe: a list of regions, and
 the exact change each syscall made to it.  The result is a replay -- start from
 nothing, apply every event's delta in order, and you have the layout at that
-point in time -- which is what the viewer will animate.
+point in time -- which is what `viewer/index.html` animates.
 
 ```console
 $ ./as-trace record -o run.json -- ./myprogram --with args
@@ -90,6 +90,50 @@ disagreement lands in `checks`.
 | `--strace-log FILE` | keep strace's raw output as well |
 | `--shell PATH` / `--strace PATH` | which shell to use as trampoline, which strace |
 | `--indent N` | `0` for one line |
+
+
+## The viewer
+
+`viewer/index.html` plays a recording back.  Open it in a browser and drop a
+`run.json` onto it; there is nothing to build, nothing to install, and it
+works straight off the filesystem.  Served over HTTP it also takes
+`?trace=run.json`, and `&autoplay`.
+
+```console
+$ ./as-trace record -o run.json -- /bin/ls
+$ xdg-open viewer/index.html          # then drop run.json on the page
+```
+
+The map on the left is the address space, low addresses at top.  Every
+address a region ever occupied keeps its place for the whole recording, so a
+mapping never shifts sideways to make room for one that appears later: what
+moves is what the program moved.  The unmapped stretches between them are
+collapsed to a fixed height and labelled with what they span -- the 24 TiB
+between the heap and the libraries is real, and drawing it to scale would
+leave nothing else on screen.  `LOG` and `LINEAR` give the axis back some or
+all of its true proportions.
+
+Blue is file-backed, brown anonymous, orange the kernel's own pages; a
+hatched box is executable, a dashed one has no access at all.  A file-backed
+region is named after the ELF section that fills most of it, which is what
+the `bias` in the JSON is for, and hovering one lists the rest.
+
+The middle panel is the syscall that produced the step, the regions it
+changed, and the mapping under the pointer.  The right panel is the whole
+trace; the strip along the bottom is the same thing as a scrub bar.  Arrow
+keys step, space plays, `Home` and `End` jump to the ends.
+
+A trace with more than one address space gets a row of chips above the map.
+`FOLLOW` keeps the map on whichever space the current event acts on, which is
+what you want while a `fork` and its child take turns; clicking a chip pins
+it instead.
+
+`INFO` opens what the recording says about itself: the command, the address
+spaces, the processes, any `checks` against `/proc/pid/maps` and any
+warnings.
+
+The two fonts come from Google Fonts.  Without a network the page falls back
+to whatever monospace you have, and nothing else about it needs the internet.
 
 
 ## Syscalls that are understood
@@ -242,9 +286,9 @@ loader places after the last `PT_LOAD`, which carries `zero_fill`.
 ```
 
 A threaded program has one space with several members; a program that forks has
-one space per child, each starting as a copy with its own region ids.  A viewer
-can give each space its own panel: `space_created` and `space_destroyed` on the
-events say when to open and close one.
+one space per child, each starting as a copy with its own region ids.
+`space_created` and `space_destroyed` on the events say when one begins and
+ends, which is how the viewer knows to follow a `fork` into its child.
 
 `baseline` says where a space's starting layout came from: `proc-maps` for one
 read at an exec, `inherited` for a copy made by fork, `none` when neither was

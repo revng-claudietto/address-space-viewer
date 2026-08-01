@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Process address space</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=IBM+Plex+Sans:wght@400;500&display=swap">
+<link rel="stylesheet" href="viewer.css">
+</head>
+<body>
+
+<div class="app">
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-name">PROCESS ADDRESS SPACE</span>
+      <span class="brand-sub">EVOLUTION UNDER PTRACE</span>
+    </div>
+    <div class="ident">
+      <span id="hdr-cmd" class="ident-cmd">no trace loaded</span>
+      <span class="rule"></span>
+      <span>pid <span id="hdr-pid">&mdash;</span></span>
+      <span class="rule"></span>
+      <span id="hdr-arch">&mdash;</span>
+      <span class="rule"></span>
+      <span id="hdr-tool">&mdash;</span>
+      <button id="info-button" class="chip-button" type="button" aria-haspopup="dialog">INFO</button>
+      <button id="open-button" class="chip-button" type="button">LOAD JSON</button>
+      <input id="file-input" type="file" accept=".json,application/json" hidden>
+    </div>
+  </header>
+
+  <div class="body">
+
+    <section class="panel map-panel">
+      <div class="panel-head">
+        <div id="space-chips" class="chips" hidden></div>
+        <span id="map-caption" class="caption">VIRTUAL ADDRESS SPACE &nbsp;&middot;&nbsp; LOW ADDRESSES AT TOP &nbsp;&middot;&nbsp; SPACE RESERVED FOR EVERY REGION EVER MAPPED</span>
+        <span class="head-right">
+          <span id="axis-seg" class="segmented">
+            <button type="button" data-mode="collapsed" class="on">COLLAPSED</button>
+            <button type="button" data-mode="log">LOG</button>
+            <button type="button" data-mode="linear">LINEAR</button>
+          </span>
+          <span id="map-counts" class="counts">0 MAPPINGS &nbsp;&middot;&nbsp; 0 B MAPPED</span>
+        </span>
+      </div>
+      <div id="map-scroll" class="map-scroll">
+        <div id="map-canvas" class="map-canvas"></div>
+      </div>
+    </section>
+
+    <section class="panel event-panel">
+      <div class="panel-head">
+        <span>EVENT <span id="ev-seq" class="strong">-- / --</span></span>
+        <span class="counts">t = <span id="ev-time">&mdash;</span></span>
+      </div>
+      <div class="panel-scroll">
+        <div class="kind-row">
+          <span id="ev-kind" class="kind-badge">IDLE</span>
+          <span class="faint">SYSCALL</span>
+          <span id="ev-space" class="space-tag" hidden></span>
+        </div>
+        <div class="callbox"><span id="ev-name" class="call-name"></span><span id="ev-args"></span></div>
+        <div class="retrow"><span class="faint">=</span><span id="ev-ret" class="ret">&mdash;</span></div>
+        <p id="ev-note" class="note"></p>
+
+        <div class="section-title">CHANGED AT THIS STEP</div>
+        <div id="ev-changes" class="changes"></div>
+
+        <div id="detail-title" class="section-title">MAPPING</div>
+        <div id="detail-rows" class="rows"></div>
+      </div>
+      <div class="legend">
+        <span><i class="swatch file"></i>FILE-BACKED</span>
+        <span><i class="swatch anon"></i>ANONYMOUS</span>
+        <span><i class="swatch special"></i>KERNEL</span>
+        <span><i class="swatch none"></i>PROT_NONE</span>
+      </div>
+    </section>
+
+    <aside class="panel log-panel">
+      <div class="panel-head">
+        <span>TRACE</span>
+        <span class="counts"><span id="log-count">0</span> EVENTS</span>
+      </div>
+      <div id="log-scroll" class="log-scroll"></div>
+    </aside>
+
+    <div id="startup" class="startup">
+      <div class="startup-card">
+        <div class="startup-title">DROP A TRACE HERE</div>
+        <p class="startup-text">This page animates the JSON that <span class="strong">as-trace</span> writes.</p>
+        <pre class="startup-cmd">./as-trace record -o run.json -- /bin/ls</pre>
+        <button id="startup-button" class="wide-button" type="button">CHOOSE A FILE&hellip;</button>
+        <p id="startup-hint" class="startup-hint">or open this page with ?trace=run.json</p>
+        <div id="startup-error" class="startup-error" hidden></div>
+      </div>
+    </div>
+
+    <div id="dropmask" class="dropmask" hidden><span>RELEASE TO LOAD</span></div>
+  </div>
+
+  <footer class="transport">
+    <div class="controls">
+      <button id="btn-first" class="tbutton" type="button" title="First event (Home)">|&lt;</button>
+      <button id="btn-prev" class="tbutton" type="button" title="Previous event (Left)">&lt;</button>
+      <button id="btn-play" class="playbutton" type="button" title="Play / pause (Space)">&#9654;</button>
+      <button id="btn-next" class="tbutton" type="button" title="Next event (Right)">&gt;</button>
+      <button id="btn-last" class="tbutton" type="button" title="Last event (End)">&gt;|</button>
+    </div>
+    <div id="speeds" class="speeds"></div>
+    <div class="scrub">
+      <div id="ticks" class="ticks"></div>
+      <div id="markers" class="markers"></div>
+    </div>
+    <div class="counter">
+      <div id="counter-text" class="counter-value">--</div>
+      <div class="counter-label">STEP</div>
+    </div>
+  </footer>
+</div>
+
+<div id="info-panel" class="info-panel" role="dialog" aria-label="Trace notes" hidden>
+  <div class="info-head">
+    <span>THIS TRACE</span>
+    <button id="info-close" class="icon-button" type="button" aria-label="Close">&times;</button>
+  </div>
+  <div id="info-body" class="info-body"></div>
+</div>
+
+<script src="viewer.js"></script>
+</body>
+</html>
