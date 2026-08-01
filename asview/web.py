@@ -16,6 +16,7 @@ import json
 import os
 import socketserver
 import threading
+import time
 from pathlib import Path
 
 VIEWER = Path(__file__).resolve().parent.parent / "viewer"
@@ -110,62 +111,117 @@ def bundled_browser() -> str | None:
     return str(found[-1]) if found else None
 
 
-def film(trace: Path, out: Path, size: tuple[int, int] = (1600, 900),
-         ms_per_step: int = 700, hold_ms: int = 1500, axis: str = "collapsed",
-         browser: str | None = None, first: int = 0,
-         last: int | None = None) -> None:
-    """Step through a whole recording with the browser recording video.
+def frames(trace: Path, into: Path, size: tuple[int, int] = (1600, 900),
+           ms_per_step: int = 700, hold_ms: int = 1500, axis: str = "collapsed",
+           browser: str | None = None, first: int = 0, last: int | None = None,
+           fps: int = 8) -> list[tuple[Path, float]]:
+    """Step through a recording, photographing the page as it goes.
 
-    playwright writes webm when the context closes; anything else is left to
-    ffmpeg, which is asked for by the suffix of `out`.
+    Not the browser's own video recorder: that writes VP8 at a bitrate meant
+    for a screen share, and every artefact it introduces is inherited by
+    whatever the frames are turned into afterwards -- including, absurdly, a
+    lossless encode of them.  A screenshot is the pixels the page was drawn
+    with.
+
+    Screenshots take as long as they take, so each frame is returned with
+    the wall time it stood for rather than with an assumed one; the caller
+    resamples.  Motion inside a step is what the interval buys: a mapping
+    that grows takes a little over half a second, and is worth several.
     """
-    import shutil
-    import subprocess
-    import tempfile
     from playwright.sync_api import sync_playwright
 
-    with Serving(trace) as serving, sync_playwright() as play, \
-            tempfile.TemporaryDirectory() as scratch:
+    into.mkdir(parents=True, exist_ok=True)
+    interval = 1.0 / max(1, fps)
+    shots: list[tuple[Path, float]] = []
+
+    with Serving(trace) as serving, sync_playwright() as play:
         chromium = play.chromium.launch(executable_path=browser or bundled_browser())
         try:
-            view = {"width": size[0], "height": size[1]}
-            context = chromium.new_context(viewport=view, record_video_dir=scratch,
-                                           record_video_size=view)
-            page = context.new_page()
+            page = chromium.new_page(viewport={"width": size[0], "height": size[1]})
             problems: list[str] = []
             page.on("pageerror", lambda e: problems.append(str(e)))
-            # Opening on the first step of the segment rather than stepping
-            # to it keeps the walk there out of the film.
+            # Opening on the first step of a segment rather than stepping to
+            # it keeps the walk there out of the film.
             page.goto(serving.url(trace=TRACE_URL.lstrip("/"), axis=axis,
                                   event=str(first)))
             page.wait_for_selector("#log-scroll .log-row")
             steps = page.locator("#log-scroll .log-row").count()
             stop = steps - 1 if last is None else min(last, steps - 1)
 
-            page.wait_for_timeout(hold_ms)
+            def snap() -> None:
+                path = into / f"f{len(shots) + 1:05d}.png"
+                started = time.monotonic()
+                page.screenshot(path=str(path), caret="hide")
+                shots.append((path, started))
+
+            def cover(seconds: float) -> None:
+                until = time.monotonic() + seconds
+                while True:
+                    snap()
+                    left = until - time.monotonic()
+                    if left <= 0:
+                        break
+                    page.wait_for_timeout(min(interval, left) * 1000)
+
+            cover(hold_ms / 1000)
             for _ in range(max(0, stop - first)):
                 page.keyboard.press("ArrowRight")
-                page.wait_for_timeout(ms_per_step)
-            page.wait_for_timeout(hold_ms)
-
-            source = Path(page.video.path())
-            context.close()             # only now is the file complete
+                cover(ms_per_step / 1000)
+            cover(hold_ms / 1000)
+            snap()
             if problems:
                 raise RuntimeError("; ".join(problems))
         finally:
             chromium.close()
 
+    # What each frame stood for: the gap to the next one, and for the last
+    # one, the interval it was aiming at.
+    out = []
+    for i, (path, when) in enumerate(shots):
+        nxt = shots[i + 1][1] if i + 1 < len(shots) else when + interval
+        out.append((path, max(0.001, nxt - when)))
+    return out
+
+
+def film(trace: Path, out: Path, size: tuple[int, int] = (1600, 900),
+         ms_per_step: int = 700, hold_ms: int = 1500, axis: str = "collapsed",
+         browser: str | None = None, first: int = 0, last: int | None = None,
+         fps: int = 8, keep_frames: Path | None = None) -> None:
+    """Photograph a recording being stepped through, and encode it."""
+    import shutil
+    import subprocess
+    import tempfile
+
+    if shutil.which("ffmpeg") is None:
+        raise RuntimeError("ffmpeg is needed to write a video")
+
+    with tempfile.TemporaryDirectory() as scratch:
+        into = Path(keep_frames) if keep_frames else Path(scratch) / "frames"
+        shot = frames(trace, into, size=size, ms_per_step=ms_per_step,
+                      hold_ms=hold_ms, axis=axis, browser=browser,
+                      first=first, last=last, fps=fps)
+
+        # A concat list rather than a frame rate, so the timings the capture
+        # actually achieved are the ones the video plays at.
+        listing = Path(scratch) / "frames.txt"
+        with open(listing, "w") as fp:
+            for path, seconds in shot:
+                fp.write(f"file '{path.resolve()}'\nduration {seconds:.4f}\n")
+            fp.write(f"file '{shot[-1][0].resolve()}'\n")
+
+        # 4:4:4 and lossless.  The usual yuv420p halves the chroma
+        # resolution, which on coloured text at this size changes every
+        # pixel in the frame; measured against the screenshots it went
+        # from 99% of pixels differing to none of them differing by more
+        # than the rounding of the colour conversion itself.  Flat panels
+        # of colour cost almost nothing to keep exactly, so this is also
+        # the smaller file.
         out.parent.mkdir(parents=True, exist_ok=True)
-        if out.suffix == ".webm":
-            shutil.copyfile(source, out)
-            return
-        if shutil.which("ffmpeg") is None:
-            raise RuntimeError(f"ffmpeg is needed to write {out.suffix}; "
-                               f"ask for a .webm instead")
         done = subprocess.run(
-            ["ffmpeg", "-y", "-loglevel", "error", "-i", str(source),
-             "-c:v", "libx264", "-preset", "slow", "-crf", "26",
-             "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(out)],
+            ["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0",
+             "-i", str(listing), "-vf", f"fps={fps},format=yuv444p",
+             "-c:v", "libx264", "-preset", "veryslow", "-qp", "0",
+             "-movflags", "+faststart", str(out)],
             capture_output=True, text=True)
         if done.returncode != 0:
             raise RuntimeError(f"ffmpeg failed: {done.stderr.strip()}")

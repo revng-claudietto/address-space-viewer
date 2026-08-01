@@ -145,6 +145,10 @@ def _parser() -> argparse.ArgumentParser:
                    help="the step to open on (default: the first)")
     p.add_argument("--to", dest="last", type=int, metavar="N",
                    help="the step to stop at (default: the last)")
+    p.add_argument("--fps", type=int, default=8, metavar="N",
+                   help="frames a second to photograph and play (default: 8)")
+    p.add_argument("--keep-frames", metavar="DIR",
+                   help="also leave the frames here, as PNG")
     p.add_argument("--browser", metavar="PATH",
                    help="the browser binary, when playwright cannot find one")
     p.set_defaults(handler=_film)
@@ -368,7 +372,8 @@ def _film(args: argparse.Namespace) -> int:
     try:
         web.film(Path(args.json), Path(args.output), size=size,
                  ms_per_step=args.ms, hold_ms=args.hold, axis=args.axis,
-                 first=args.first, last=args.last,
+                 first=args.first, last=args.last, fps=args.fps,
+                 keep_frames=Path(args.keep_frames) if args.keep_frames else None,
                  browser=args.browser or os.environ.get("AS_TRACE_BROWSER"))
     except ImportError:
         print("as-trace: film needs playwright and a browser; "
