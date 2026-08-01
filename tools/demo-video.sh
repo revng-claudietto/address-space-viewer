@@ -51,40 +51,29 @@ echo "filming the whole timeline"
 # its artefacts perfectly: the same fifteen steps were 12 MB of carefully
 # kept mush that way, and are 1.4 MB of exact pixels this way, because the
 # noise was most of what there was to compress.
+#
+# 800 points wide, because that is under the width of the column a README
+# is rendered in and so is shown at its own size -- an image wider than the
+# column is resampled by the browser, which is the one scaling step no
+# encoder setting can undo.
+#
+# 800 of layout, not 800 of shrunken 1280.  The type in the viewer is ten
+# and eleven pixels; at 1280 laid out on 800 it comes out at seven, and
+# seven pixel type is not clean however it is rasterised.  The page lays
+# out for the window instead, and every glyph is drawn at the size it is
+# read at.
+#
+# Then twice the pixels for the same 800, which is what a modern display
+# asks the browser for: an 800 pixel image shown at 800 points on one of
+# them is stretched to 1600 and looks it.  The README asks for it back at
+# 800 wide.
 if command -v img2webp >/dev/null 2>&1; then
-	# The demo's own work starts where it reserves its arena, which is the
-	# only PROT_NONE mapping in the recording.  Fifteen steps from there is
-	# the whole of what the program does to its own memory.
-	from=$(python3 -c "
-import json
-events = json.load(open('$out/demo.json'))['events']
-start = next((e['seq'] for e in events
-              if e['category'] == 'map'
-              and (e.get('args') or {}).get('prot') == 'PROT_NONE'), 1)
-print(max(0, start - 1))")
-
-	# 800 pixels wide, because that is under the width of the column a
-	# README is rendered in and so is shown at its own size -- an image
-	# wider than the column is resampled by the browser, which is the one
-	# scaling step no encoder setting can undo.
-	#
-	# 800 of layout, not 800 of shrunken 1280.  The type in the viewer is
-	# ten and eleven pixels; at 1280 laid out on 800 it comes out at seven,
-	# and seven pixel type is not clean however it is rasterised.  The page
-	# lays out for the window instead, and every glyph is drawn at the size
-	# it is read at.
-	#
-	# Then twice the pixels for the same 800, which is what a modern
-	# display asks the browser for: an 800 pixel image shown at 800 points
-	# on one of them is stretched to 1600 and looks it.  This is the same
-	# page at the same layout, rasterised at the density it will be looked
-	# at -- the README asks for it back at 800 wide.
 	fps=${LOOP_FPS:-6}
-	echo "photographing steps $from to $((from + 15)) again, for the README"
+	echo "photographing the whole timeline again, for the README"
 	"$here/as-trace" film "$out/demo.json" -o "$scratch/short.mp4" \
 		--size "${LOOP_SIZE:-800x760}" --zoom "${LOOP_ZOOM:-2}" \
-		--ms "${LOOP_MS:-420}" --hold 900 --fps "$fps" \
-		--from "$from" --to "$((from + 15))" --keep-frames "$scratch/frames"
+		--ms "${LOOP_MS:-360}" --hold 900 --fps "$fps" \
+		--keep-frames "$scratch/frames"
 	img2webp -loop 0 -d $((1000 / fps)) -lossless -m 6 -min_size \
 		"$scratch"/frames/*.png -o "$out/address-space.webp"
 fi

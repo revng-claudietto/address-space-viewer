@@ -16,11 +16,10 @@ grow, move, share, fork and release -- played back by the viewer.  CI rebuilds
 it from every push and attaches the full-size recording to a release:
 [the video](https://github.com/revng-claudietto/address-space-viewer/releases/download/demo/address-space.mp4) at
 1600x900 and unhurried, and [the JSON it plays](https://github.com/revng-claudietto/address-space-viewer/releases/download/demo/demo.json),
-which you can drop on the viewer yourself.  The animation above is the
-fifteen steps in the middle of it, where the program is working on its own
-memory rather than being loaded; a README will not play a video, since
-GitHub keeps `<video>` only for files uploaded to GitHub itself.  It is 800
-points wide because that is the width it is shown at: the page is laid out
+which you can drop on the viewer yourself.  The animation above is the same
+recording from its first step to its last, quicker; a README will not play a
+video, since GitHub keeps `<video>` only for files uploaded to GitHub
+itself.  It is 800 points wide because that is the width it is shown at: the page is laid out
 for that window rather than laid out wide and shrunk into it, so every glyph
 is drawn at the size it is read at.  The file itself is twice that in each
 direction, which is what a display of any density will ask the browser for,
