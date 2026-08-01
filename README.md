@@ -378,8 +378,10 @@ $ nix flake check        # the test suite
 ```
 
 The package is the command and the viewer together; `strace` comes with it.
-`nix develop` adds what only `as-trace shot` needs -- playwright and a
-chromium -- which the tool finds through `PLAYWRIGHT_BROWSERS_PATH`.
+`nix develop` adds the rest of what the repository is worked on with:
+`libdebug` for the other backend, playwright and a chromium for `shot` and
+`film` -- found through `PLAYWRIGHT_BROWSERS_PATH` -- and ffmpeg for
+everything that is not a `.webm`.
 
 
 ## The demo

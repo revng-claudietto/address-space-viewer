@@ -25,7 +25,9 @@ stdenvNoCC.mkDerivation (final: {
     src = ../.;
     filter = path: type:
       let name = baseNameOf path; in
-      name != "__pycache__" && !lib.hasSuffix ".pyc" name && name != ".git";
+      name != "__pycache__" && !lib.hasSuffix ".pyc" name && name != ".git"
+      # The README's animation is megabytes and is not part of the tool.
+      && name != "docs" && name != ".github" && name != "out";
   };
 
   nativeBuildInputs = [ makeWrapper ];
@@ -37,7 +39,7 @@ stdenvNoCC.mkDerivation (final: {
     runHook preInstall
 
     mkdir -p $out/libexec/as-trace
-    cp -r asview viewer as-trace README.md $out/libexec/as-trace/
+    cp -r asview viewer demo tools as-trace README.md $out/libexec/as-trace/
     chmod +x $out/libexec/as-trace/as-trace
 
     makeWrapper ${python}/bin/python3 $out/bin/as-trace \
@@ -54,7 +56,7 @@ stdenvNoCC.mkDerivation (final: {
     {
       nativeBuildInputs = [ python strace ];
     } ''
-    cp -r ${final.src}/{asview,viewer,tests,as-trace} .
+    cp -r ${final.src}/{asview,viewer,tests,demo,as-trace} .
     python3 -m unittest discover -s tests -v 2>&1 | tail -6
     touch $out
   '';
