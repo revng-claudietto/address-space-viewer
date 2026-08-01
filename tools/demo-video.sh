@@ -40,4 +40,22 @@ echo "filming the whole timeline"
 "$here/as-trace" film "$out/demo.json" -o "$out/address-space.mp4" \
 	--size "$size" --ms "${MS:-650}" --hold "${HOLD:-1800}"
 
+# A README cannot play a video: GitHub keeps <video> only for its own asset
+# hosts, and proxies images from a private repo's releases without the
+# credentials to fetch them.  What it does render is a file in the
+# repository, so the same recording is filmed again, smaller and quicker,
+# and turned into the one animated format a README will show.
+if command -v ffmpeg >/dev/null 2>&1; then
+	echo "filming it again for the README"
+	"$here/as-trace" film "$out/demo.json" -o "$scratch/short.mp4" \
+		--size 1280x720 --ms "${GIF_MS:-320}" --hold 900
+	palette=$scratch/palette.png
+	frames="fps=7,scale=900:-1:flags=lanczos"
+	ffmpeg -v error -y -i "$scratch/short.mp4" \
+		-vf "$frames,palettegen=max_colors=40:stats_mode=diff" "$palette"
+	ffmpeg -v error -y -i "$scratch/short.mp4" -i "$palette" \
+		-lavfi "$frames[x];[x][1:v]paletteuse=dither=none:diff_mode=rectangle" \
+		"$out/address-space.gif"
+fi
+
 ls -l "$out"

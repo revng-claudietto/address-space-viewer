@@ -8,14 +8,16 @@ the exact change each syscall made to it.  The result is a replay -- start from
 nothing, apply every event's delta in order, and you have the layout at that
 point in time -- which is what `viewer/index.html` animates.
 
-<video src="https://github.com/revng-claudietto/address-space-viewer/releases/download/demo/address-space.mp4" poster="https://github.com/revng-claudietto/address-space-viewer/releases/download/demo/poster.png"
-       controls muted loop width="900"></video>
+![The viewer playing back a recording of demo/demo.c](docs/address-space.gif)
 
-[The recording above as a file](https://github.com/revng-claudietto/address-space-viewer/releases/download/demo/address-space.mp4), if it does not play
-here.  It is `demo/demo.c` -- sixty lines that reserve, commit, protect,
-name, grow, move, share, fork and release -- rebuilt and re-filmed by CI from
-every push, along with [the JSON it plays](https://github.com/revng-claudietto/address-space-viewer/releases/download/demo/demo.json), which you can
-drop on the viewer yourself.
+That is `demo/demo.c` -- sixty lines that reserve, commit, protect, name,
+grow, move, share, fork and release -- played back by the viewer.  CI rebuilds
+it from every push and attaches the full-size recording to a release:
+[the video](https://github.com/revng-claudietto/address-space-viewer/releases/download/demo/address-space.mp4) at
+1600x900 and unhurried, and [the JSON it plays](https://github.com/revng-claudietto/address-space-viewer/releases/download/demo/demo.json),
+which you can drop on the viewer yourself.  The animation above is the same
+thing quicker and smaller, because a README will not play a video -- GitHub
+keeps `<video>` only for files uploaded to GitHub itself.
 
 ```console
 $ ./as-trace record -o run.json -- ./myprogram --with args
