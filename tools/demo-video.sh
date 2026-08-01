@@ -48,9 +48,16 @@ echo "filming the whole timeline"
 #
 # Animated webp rather than gif: gif has 256 colours to spend on a dark
 # panel full of antialiased text, and paying for legibility in palette
-# entries costs more than it is worth.  webp keeps the pixels the browser
-# was given, which is why the animation is filmed at the width it is drawn
-# at rather than scaled down to fit a budget.
+# entries costs more than it is worth.
+#
+# Two things this format is spent on, in order.  It is filmed at the width
+# it is drawn at, because scaling a screenful of 10px text to seventy per
+# cent is what made the first attempt unreadable.  And the quality is high,
+# because lossy compression puts its error exactly where the eye is -- on
+# the edges of glyphs.  What is given up for both is frames: eight a second
+# rather than ten, over fifteen steps rather than forty-one.  Lossless webp
+# would keep every pixel and is thirty-three megabytes, which is not a
+# README.
 if command -v ffmpeg >/dev/null 2>&1; then
 	# The demo's own work starts where it reserves its arena, which is the
 	# only PROT_NONE mapping in the recording.  Fifteen steps from there is
@@ -67,8 +74,8 @@ print(max(0, start - 1))")
 	"$here/as-trace" film "$out/demo.json" -o "$scratch/short.webm" \
 		--size 1280x720 --ms "${LOOP_MS:-420}" --hold 900 \
 		--from "$from" --to "$((from + 15))"
-	ffmpeg -v error -y -i "$scratch/short.webm" -vf fps=10 \
-		-c:v libwebp -lossless 0 -q:v 55 -preset picture -loop 0 -an \
+	ffmpeg -v error -y -i "$scratch/short.webm" -vf fps=8 \
+		-c:v libwebp -lossless 0 -q:v 85 -preset picture -loop 0 -an \
 		"$out/address-space.webp"
 fi
 
