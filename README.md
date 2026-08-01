@@ -20,10 +20,27 @@ fifteen steps in the middle of it, where the program is working on its own
 memory rather than being loaded; a README will not play a video, since
 GitHub keeps `<video>` only for files uploaded to GitHub itself.
 
+
+## Getting started
+
+Record a program, then look at what it did:
+
 ```console
 $ ./as-trace record -o run.json -- ./myprogram --with args
 as-trace: 54 events, 1 address space(s), peak 42 regions; the program exited with 0
 
+$ ./as-trace view run.json
+http://127.0.0.1:38017/index.html?trace=trace.json
+```
+
+`view` starts a server and opens a browser on it.  There is nothing to build
+and nothing to install for the page itself: it is three static files, and it
+will take a recording by drag and drop as readily as by URL, so
+`xdg-open viewer/index.html` and dropping `run.json` on it works too.
+
+Without a browser, the same recording reads as text:
+
+```console
 $ ./as-trace summary run.json
 # ./myprogram --with args
 # 54 events, 1 address space(s), 1 process(es)
@@ -37,80 +54,6 @@ $ ./as-trace summary run.json
 Requirements: Python 3.10+, `/proc`, and one of the two backends below --
 `strace` 5.2 or newer, or `libdebug`.  `pyelftools` is optional and adds the
 segments and sections of every mapped ELF.
-
-
-## The one thing a syscall trace cannot tell you
-
-`execve` builds an address space -- the executable, the loader, the stack, the
-vdso -- and reports none of it.  Every later `mprotect` in the trace lands on
-something the trace never mentioned.
-
-The only account of that state is `/proc/<pid>/maps`, and reading it is a race:
-by the time a reader is scheduled, the loader has mapped half of libc.  So the
-program is held still, exactly once per exec:
-
-```
-strace --inject=execve:delay_exit=120000 -- /bin/sh -c 'exec "$0" "$@"'  ./myprogram args
-```
-
-`delay_exit` pauses the tracee after `execve` returned and before the new
-program runs an instruction, which is precisely the state we are missing.
-strace cannot inject into the *first* `execve` -- it performs that one itself,
-before tracing is established -- hence the shell, whose `exec` is a second
-`execve`.  The shell's own address space is wiped by that `exec`; it is tagged
-as the trampoline and left out of the output.
-
-**That is the whole mechanism.**  One pause per exec, and nothing else about
-the recording depends on timing:
-
-- `/proc/<pid>/auxv` is rewritten by every successful exec, so a change to it
-  is what says the new image is in place.  No stopwatch, no guessing at how
-  long a stop lasted.
-- `maps` is read twice while the process is stopped, and a snapshot whose two
-  reads disagree is dropped and taken again on the next look.
-- The replay keeps a snapshot **only** if it lands on an `execve`.  Anything
-  read at some other stop is discarded rather than guessed about, because
-  whether the call it was standing in had run yet is not knowable from the
-  trace.
-
-`--no-baseline` removes even that pause.  The timeline then starts from an
-empty address space and shows only what the syscalls say.
-
-The pause is taken back out of the timeline (see `t` below), so an animation
-runs at the speed the program really had.
-
-
-## Two backends
-
-`--backend strace` (the default) and `--backend libdebug` collect the same
-recording by different means.  Everything after collection -- the model, the
-replay, the JSON, the viewer -- is shared, so the choice is only about how
-the syscalls and the exec baseline are caught.
-
-|  | `strace` | `libdebug` |
-|---|---|---|
-| exec baseline | injected delay, then a watcher | a ptrace stop, read directly |
-| cost to the target | 120 ms per exec, taken back out of `t` | none |
-| syscall decoding | strace's, mature and complete | this repo's, in `libdebug_record.py` |
-| following forks and threads | `strace -f` | one debugger per child |
-| needs | the `strace` binary | a compiled extension, x86-64/aarch64/i386 |
-
-libdebug has the better baseline: it stops the target after its own exec and
-calls back at the exit of later ones, so reading `/proc/<pid>/maps` there is
-a direct read rather than a race, and none of the trampoline, the injected
-delay, the auxv watch or the timeline correction above is needed.  It is the
-weaker syscall reader: libdebug hands over six registers and a return value,
-and the adapter has to recover strings and argv from the target's memory,
-resolve descriptors, name flags and synthesise the exit records that strace
-prints for free.
-
-Both are run against the same end-to-end tests, including the one that
-compares a replayed state against what the kernel itself printed.
-
-```console
-$ pip install -r requirements-libdebug.txt
-$ ./as-trace record --backend libdebug -o run.json -- ./myprogram
-```
 
 
 ## Commands
@@ -147,19 +90,9 @@ disagreement lands in `checks`.
 
 ## The viewer
 
-`viewer/index.html` plays a recording back.  Open it in a browser and drop a
-`run.json` onto it; there is nothing to build, nothing to install, and it
-works straight off the filesystem.
-
-```console
-$ ./as-trace record -o run.json -- /bin/ls
-$ ./as-trace view run.json            # serves it and opens a browser
-$ xdg-open viewer/index.html          # or open it and drop run.json on the page
-```
-
 `view` exists only because a browser will not `fetch` a `file://` URL; it
 serves the three files and the JSON and nothing else.  Served over HTTP the
-page also takes `?trace=`, `&axis=` and `&autoplay` directly.
+page also takes `?trace=`, `&axis=`, `&event=` and `&autoplay` directly.
 
 The map is the address space, low addresses at top, and it owns the full
 height of the window: everything else is in the column beside it, so nothing
@@ -208,6 +141,100 @@ warnings.
 
 The two fonts come from Google Fonts.  Without a network the page falls back
 to whatever monospace you have, and nothing else about it needs the internet.
+
+
+## Two backends
+
+`--backend strace` (the default) and `--backend libdebug` collect the same
+recording by different means.  Everything after collection -- the model, the
+replay, the JSON, the viewer -- is shared, so the choice is only about how
+the syscalls and the exec baseline are caught.
+
+|  | `strace` | `libdebug` |
+|---|---|---|
+| exec baseline | injected delay, then a watcher | a ptrace stop, read directly |
+| cost to the target | 120 ms per exec, taken back out of `t` | none |
+| syscall decoding | strace's, mature and complete | this repo's, in `libdebug_record.py` |
+| following forks and threads | `strace -f` | one debugger per child |
+| needs | the `strace` binary | a compiled extension, x86-64/aarch64/i386 |
+
+libdebug has the better baseline: it stops the target after its own exec and
+calls back at the exit of later ones, so reading `/proc/<pid>/maps` there is
+a direct read rather than a race, and none of the trampoline, the injected
+delay, the auxv watch or the timeline correction above is needed.  It is the
+weaker syscall reader: libdebug hands over six registers and a return value,
+and the adapter has to recover strings and argv from the target's memory,
+resolve descriptors, name flags and synthesise the exit records that strace
+prints for free.
+
+Both are run against the same end-to-end tests, including the one that
+compares a replayed state against what the kernel itself printed.
+
+```console
+$ pip install -r requirements-libdebug.txt
+$ ./as-trace record --backend libdebug -o run.json -- ./myprogram
+```
+
+
+## The demo
+
+`demo/demo.c` exists to have an interesting address space and nothing else:
+it reserves sixty-four pages with no access, commits the middle of them,
+names them, turns one page into code, maps its own image, maps a page
+shared, grows the heap past what malloc keeps in hand, grows one mapping
+where it stands and moves another, forks, and gives it all back.  Every line
+of it is a box that moves.
+
+```console
+$ tools/demo-video.sh out      # builds it, records it, films the playback
+```
+
+The end-to-end tests record it and check that each of those arrives as
+itself -- a region with no access, one that ends up executable, one carrying
+the name the program gave it, a shared one, an mremap that grew in place and
+one that had to move, and a child whose space is a copy of its parent's,
+region for region.
+
+
+## The one thing a syscall trace cannot tell you
+
+`execve` builds an address space -- the executable, the loader, the stack, the
+vdso -- and reports none of it.  Every later `mprotect` in the trace lands on
+something the trace never mentioned.
+
+The only account of that state is `/proc/<pid>/maps`, and reading it is a race:
+by the time a reader is scheduled, the loader has mapped half of libc.  So the
+program is held still, exactly once per exec:
+
+```
+strace --inject=execve:delay_exit=120000 -- /bin/sh -c 'exec "$0" "$@"'  ./myprogram args
+```
+
+`delay_exit` pauses the tracee after `execve` returned and before the new
+program runs an instruction, which is precisely the state we are missing.
+strace cannot inject into the *first* `execve` -- it performs that one itself,
+before tracing is established -- hence the shell, whose `exec` is a second
+`execve`.  The shell's own address space is wiped by that `exec`; it is tagged
+as the trampoline and left out of the output.
+
+**That is the whole mechanism.**  One pause per exec, and nothing else about
+the recording depends on timing:
+
+- `/proc/<pid>/auxv` is rewritten by every successful exec, so a change to it
+  is what says the new image is in place.  No stopwatch, no guessing at how
+  long a stop lasted.
+- `maps` is read twice while the process is stopped, and a snapshot whose two
+  reads disagree is dropped and taken again on the next look.
+- The replay keeps a snapshot **only** if it lands on an `execve`.  Anything
+  read at some other stop is discarded rather than guessed about, because
+  whether the call it was standing in had run yet is not knowable from the
+  trace.
+
+`--no-baseline` removes even that pause.  The timeline then starts from an
+empty address space and shows only what the syscalls say.
+
+The pause is taken back out of the timeline (see `t` below), so an animation
+runs at the speed the program really had.
 
 
 ## Syscalls that are understood
@@ -383,26 +410,6 @@ The package is the command and the viewer together; `strace` comes with it.
 `libdebug` for the other backend, playwright and a chromium for `shot` and
 `film` -- found through `PLAYWRIGHT_BROWSERS_PATH` -- and ffmpeg for
 everything that is not a `.webm`.
-
-
-## The demo
-
-`demo/demo.c` exists to have an interesting address space and nothing else:
-it reserves sixty-four pages with no access, commits the middle of them,
-names them, turns one page into code, maps its own image, maps a page
-shared, grows the heap past what malloc keeps in hand, grows one mapping
-where it stands and moves another, forks, and gives it all back.  Every line
-of it is a box that moves.
-
-```console
-$ tools/demo-video.sh out      # builds it, records it, films the playback
-```
-
-The end-to-end tests record it and check that each of those arrives as
-itself -- a region with no access, one that ends up executable, one carrying
-the name the program gave it, a shared one, an mremap that grew in place and
-one that had to move, and a child whose space is a copy of its parent's,
-region for region.
 
 
 ## Tests

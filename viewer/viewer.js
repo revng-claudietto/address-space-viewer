@@ -180,20 +180,27 @@ function sectionsIn(raw, objects) {
 
 /* What a mapping holds, named without the file it comes from -- the block it
    sits in is named after that.  A mapping is a range of pages rather than a
-   section, and usually holds several, so it is named after the largest and
-   says how many others came with it. */
+   section, and usually holds several, so it is named after whichever fills
+   most of it and says how many others came with it.
+
+   The ELF header and the program headers sit at the object's base address
+   and are in no section, so a range holding that address and mostly not
+   holding sections is the headers.  Both halves matter.  A page of .data
+   that is mostly padding is not the headers because the base is elsewhere;
+   a whole file mapped read-only, which is how a loader reserves room for
+   one, does hold the base but is mostly .text, and is named after that. */
 function whatIsIn(r) {
   if (r.name) return r.name;
-  if (r.object && r.offset === '0x0' && r.path) {
-    // The first page of an ELF is its header and program headers, whatever
-    // else the loader put in the same PT_LOAD.
-    return 'ELF headers' + (r.sections.length ? ' +' + r.sections.length : '');
-  }
-  var top = null, best = -1;
+  var top = null, best = -1, accounted = 0;
   r.sections.forEach(function (s) {
+    accounted += s.overlap;
     if (s.overlap > best) { best = s.overlap; top = s.name; }
   });
+  if (r.holdsBase && r.sections.length && r.size - accounted > best) {
+    return 'ELF headers +' + r.sections.length;
+  }
   if (top) return top + (r.sections.length > 1 ? ' +' + (r.sections.length - 1) : '');
+  if (r.holdsBase && r.path) return 'ELF headers';
   if (r.zero_fill) return '.bss';
   if (r.path) return basename(r.path);
   switch (r.kind) {
@@ -220,6 +227,8 @@ function makeRegion(raw, objects) {
   r.blocked = r.perms.slice(0, 3) === '---';
   r.bucket = bucketOf(raw);
   r.sections = sectionsIn(raw, objects);
+  var base = big(raw.bias);
+  r.holdsBase = base !== null && base >= r._s && base < r._e;
   r.within = whatIsIn(r);
   r.label = labelOf(r);
   return r;
