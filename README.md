@@ -8,7 +8,8 @@ the exact change each syscall made to it.  The result is a replay -- start from
 nothing, apply every event's delta in order, and you have the layout at that
 point in time -- which is what `viewer/index.html` animates.
 
-![The viewer playing back a recording of demo/demo.c](docs/address-space.webp)
+<img src="docs/address-space.webp" width="800"
+     alt="The viewer playing back a recording of demo/demo.c">
 
 That is `demo/demo.c` -- sixty lines that reserve, commit, protect, name,
 grow, move, share, fork and release -- played back by the viewer.  CI rebuilds
@@ -19,10 +20,11 @@ which you can drop on the viewer yourself.  The animation above is the
 fifteen steps in the middle of it, where the program is working on its own
 memory rather than being loaded; a README will not play a video, since
 GitHub keeps `<video>` only for files uploaded to GitHub itself.  It is 800
-pixels wide because that is the width it is shown at: the page is laid out
+points wide because that is the width it is shown at: the page is laid out
 for that window rather than laid out wide and shrunk into it, so every glyph
-is drawn at the size it is read at and nothing is resampled on the way to
-the screen.
+is drawn at the size it is read at.  The file itself is twice that in each
+direction, which is what a display of any density will ask the browser for,
+so nothing is stretched on the way to the screen either.
 
 
 ## Getting started

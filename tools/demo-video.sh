@@ -73,10 +73,16 @@ print(max(0, start - 1))")
 	# and seven pixel type is not clean however it is rasterised.  The page
 	# lays out for the window instead, and every glyph is drawn at the size
 	# it is read at.
+	#
+	# Then twice the pixels for the same 800, which is what a modern
+	# display asks the browser for: an 800 pixel image shown at 800 points
+	# on one of them is stretched to 1600 and looks it.  This is the same
+	# page at the same layout, rasterised at the density it will be looked
+	# at -- the README asks for it back at 800 wide.
 	fps=${LOOP_FPS:-6}
 	echo "photographing steps $from to $((from + 15)) again, for the README"
 	"$here/as-trace" film "$out/demo.json" -o "$scratch/short.mp4" \
-		--size "${LOOP_SIZE:-800x760}" \
+		--size "${LOOP_SIZE:-800x760}" --zoom "${LOOP_ZOOM:-2}" \
 		--ms "${LOOP_MS:-420}" --hold 900 --fps "$fps" \
 		--from "$from" --to "$((from + 15))" --keep-frames "$scratch/frames"
 	img2webp -loop 0 -d $((1000 / fps)) -lossless -m 6 -min_size \
