@@ -112,7 +112,8 @@ def bundled_browser() -> str | None:
 
 def film(trace: Path, out: Path, size: tuple[int, int] = (1600, 900),
          ms_per_step: int = 700, hold_ms: int = 1500, axis: str = "collapsed",
-         browser: str | None = None) -> None:
+         browser: str | None = None, first: int = 0,
+         last: int | None = None) -> None:
     """Step through a whole recording with the browser recording video.
 
     playwright writes webm when the context closes; anything else is left to
@@ -133,12 +134,16 @@ def film(trace: Path, out: Path, size: tuple[int, int] = (1600, 900),
             page = context.new_page()
             problems: list[str] = []
             page.on("pageerror", lambda e: problems.append(str(e)))
-            page.goto(serving.url(trace=TRACE_URL.lstrip("/"), axis=axis))
+            # Opening on the first step of the segment rather than stepping
+            # to it keeps the walk there out of the film.
+            page.goto(serving.url(trace=TRACE_URL.lstrip("/"), axis=axis,
+                                  event=str(first)))
             page.wait_for_selector("#log-scroll .log-row")
             steps = page.locator("#log-scroll .log-row").count()
+            stop = steps - 1 if last is None else min(last, steps - 1)
 
             page.wait_for_timeout(hold_ms)
-            for _ in range(steps - 1):
+            for _ in range(max(0, stop - first)):
                 page.keyboard.press("ArrowRight")
                 page.wait_for_timeout(ms_per_step)
             page.wait_for_timeout(hold_ms)

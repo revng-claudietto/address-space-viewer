@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       refresh_readme_gif:
-        description: "Also commit the regenerated docs/address-space.gif"
+        description: "Also commit the regenerated docs/address-space.webp"
         type: boolean
         default: false
 
@@ -82,7 +82,7 @@ jobs:
             --title "Demo recording" \
             --notes "The viewer playing back a recording of demo/demo.c.
           Rebuilt from master on every push; the URLs under this tag are stable."
-          gh release upload demo out/address-space.mp4 out/address-space.gif \
+          gh release upload demo out/address-space.mp4 out/address-space.webp \
             out/poster.png out/demo.json --clobber
 
       # Only when asked: the README's animation is a file in the repository,
@@ -91,9 +91,9 @@ jobs:
       - name: Refresh the animation in the README
         if: github.event_name == 'workflow_dispatch' && inputs.refresh_readme_gif
         run: |
-          cp out/address-space.gif docs/address-space.gif
+          cp out/address-space.webp docs/address-space.webp
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/address-space.gif
+          git add docs/address-space.webp
           git diff --cached --quiet || git commit -m "Refresh the README animation"
           git push

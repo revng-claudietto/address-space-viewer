@@ -134,7 +134,8 @@ function big(s) {
   try { return BigInt(s); } catch (e) { return null; }
 }
 
-// ?trace=run.json loads one on arrival, &autoplay starts it moving.
+// ?trace=run.json loads one on arrival, &autoplay starts it moving, and
+// &event=N opens on a step other than the first.
 function param(name) {
   return new URLSearchParams(location.search).get(name);
 }
@@ -564,12 +565,14 @@ function load(doc, name) {
   setPlaying(false);
   var model = buildModel(doc);
   state.model = model;
-  state.idx = 0;
+  var opening = parseInt(param('event'), 10);
+  state.idx = isFinite(opening)
+    ? Math.max(0, Math.min(doc.events.length - 1, opening)) : 0;
   state.lastIdx = -1;
   state.hover = null;
   state.pick = null;
   state.follow = true;
-  state.space = model.events[0].space || model.spaceIds[0] || null;
+  state.space = model.events[state.idx].space || model.spaceIds[0] || null;
   model.layouts = {};
 
   $('startup').hidden = true;

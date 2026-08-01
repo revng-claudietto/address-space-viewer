@@ -141,6 +141,10 @@ def _parser() -> argparse.ArgumentParser:
                    help="how long to dwell on each step (default: 700)")
     p.add_argument("--hold", type=int, default=1500, metavar="N",
                    help="how long to hold at each end (default: 1500)")
+    p.add_argument("--from", dest="first", type=int, default=0, metavar="N",
+                   help="the step to open on (default: the first)")
+    p.add_argument("--to", dest="last", type=int, metavar="N",
+                   help="the step to stop at (default: the last)")
     p.add_argument("--browser", metavar="PATH",
                    help="the browser binary, when playwright cannot find one")
     p.set_defaults(handler=_film)
@@ -364,6 +368,7 @@ def _film(args: argparse.Namespace) -> int:
     try:
         web.film(Path(args.json), Path(args.output), size=size,
                  ms_per_step=args.ms, hold_ms=args.hold, axis=args.axis,
+                 first=args.first, last=args.last,
                  browser=args.browser or os.environ.get("AS_TRACE_BROWSER"))
     except ImportError:
         print("as-trace: film needs playwright and a browser; "

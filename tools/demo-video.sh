@@ -40,22 +40,36 @@ echo "filming the whole timeline"
 "$here/as-trace" film "$out/demo.json" -o "$out/address-space.mp4" \
 	--size "$size" --ms "${MS:-650}" --hold "${HOLD:-1800}"
 
-# A README cannot play a video: GitHub keeps <video> only for its own asset
-# hosts, and proxies images from a private repo's releases without the
-# credentials to fetch them.  What it does render is a file in the
-# repository, so the same recording is filmed again, smaller and quicker,
-# and turned into the one animated format a README will show.
+# A README cannot play a video: GitHub keeps <video> only for files
+# uploaded to GitHub itself, and drops the element everywhere else -- which
+# is true of a public repository as much as a private one.  What it does
+# render is an image in the repository, so the same recording is filmed
+# again as an animation.
+#
+# Animated webp rather than gif: gif has 256 colours to spend on a dark
+# panel full of antialiased text, and paying for legibility in palette
+# entries costs more than it is worth.  webp keeps the pixels the browser
+# was given, which is why the animation is filmed at the width it is drawn
+# at rather than scaled down to fit a budget.
 if command -v ffmpeg >/dev/null 2>&1; then
-	echo "filming it again for the README"
-	"$here/as-trace" film "$out/demo.json" -o "$scratch/short.mp4" \
-		--size 1280x720 --ms "${GIF_MS:-320}" --hold 900
-	palette=$scratch/palette.png
-	frames="fps=7,scale=900:-1:flags=lanczos"
-	ffmpeg -v error -y -i "$scratch/short.mp4" \
-		-vf "$frames,palettegen=max_colors=40:stats_mode=diff" "$palette"
-	ffmpeg -v error -y -i "$scratch/short.mp4" -i "$palette" \
-		-lavfi "$frames[x];[x][1:v]paletteuse=dither=none:diff_mode=rectangle" \
-		"$out/address-space.gif"
+	# The demo's own work starts where it reserves its arena, which is the
+	# only PROT_NONE mapping in the recording.  Fifteen steps from there is
+	# the whole of what the program does to its own memory.
+	from=$(python3 -c "
+import json
+events = json.load(open('$out/demo.json'))['events']
+start = next((e['seq'] for e in events
+              if e['category'] == 'map'
+              and (e.get('args') or {}).get('prot') == 'PROT_NONE'), 1)
+print(max(0, start - 1))")
+
+	echo "filming steps $from to $((from + 15)) again, for the README"
+	"$here/as-trace" film "$out/demo.json" -o "$scratch/short.webm" \
+		--size 1280x720 --ms "${LOOP_MS:-420}" --hold 900 \
+		--from "$from" --to "$((from + 15))"
+	ffmpeg -v error -y -i "$scratch/short.webm" -vf fps=10 \
+		-c:v libwebp -lossless 0 -q:v 55 -preset picture -loop 0 -an \
+		"$out/address-space.webp"
 fi
 
 ls -l "$out"
