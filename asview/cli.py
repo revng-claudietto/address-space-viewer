@@ -5,6 +5,7 @@
   summary  print a JSON timeline as text, to read without a browser
   view     serve the viewer with a timeline loaded, and open it
   shot     render the viewer on a timeline and write a PNG
+  film     step through a timeline in a browser and write a video
 """
 
 from __future__ import annotations
@@ -128,6 +129,21 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--browser", metavar="PATH",
                    help="the browser binary, when playwright cannot find one")
     p.set_defaults(handler=_shot)
+
+    p = subs.add_parser("film", parents=[page],
+                        help="step through a timeline and write a video")
+    p.add_argument("json", help="a file from record")
+    p.add_argument("-o", "--output", default="timeline.mp4", metavar="FILE",
+                   help=".webm as the browser recorded it, anything else "
+                        "through ffmpeg (default: timeline.mp4)")
+    p.add_argument("--size", default="1600x900", metavar="WxH")
+    p.add_argument("--ms", type=int, default=700, metavar="N",
+                   help="how long to dwell on each step (default: 700)")
+    p.add_argument("--hold", type=int, default=1500, metavar="N",
+                   help="how long to hold at each end (default: 1500)")
+    p.add_argument("--browser", metavar="PATH",
+                   help="the browser binary, when playwright cannot find one")
+    p.set_defaults(handler=_film)
 
     return parser
 
@@ -318,11 +334,8 @@ def _shot(args: argparse.Namespace) -> int:
     if problem:
         print(f"as-trace: {problem}", file=sys.stderr)
         return 1
-    try:
-        width, _, height = args.size.partition("x")
-        size = (int(width), int(height))
-    except ValueError:
-        print(f"as-trace: --size wants WxH, not {args.size}", file=sys.stderr)
+    size = _size(args.size)
+    if size is None:
         return 2
 
     try:
@@ -338,6 +351,38 @@ def _shot(args: argparse.Namespace) -> int:
         return 1
     print(f"as-trace: wrote {args.output}", file=sys.stderr)
     return 0
+
+
+def _film(args: argparse.Namespace) -> int:
+    problem = web.check_viewer() or web.check_trace(Path(args.json))
+    if problem:
+        print(f"as-trace: {problem}", file=sys.stderr)
+        return 1
+    size = _size(args.size)
+    if size is None:
+        return 2
+    try:
+        web.film(Path(args.json), Path(args.output), size=size,
+                 ms_per_step=args.ms, hold_ms=args.hold, axis=args.axis,
+                 browser=args.browser or os.environ.get("AS_TRACE_BROWSER"))
+    except ImportError:
+        print("as-trace: film needs playwright and a browser; "
+              "`nix develop` has both", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"as-trace: {e}", file=sys.stderr)
+        return 1
+    print(f"as-trace: wrote {args.output}", file=sys.stderr)
+    return 0
+
+
+def _size(text: str) -> tuple[int, int] | None:
+    try:
+        width, _, height = text.partition("x")
+        return int(width), int(height)
+    except ValueError:
+        print(f"as-trace: --size wants WxH, not {text}", file=sys.stderr)
+        return None
 
 
 # --------------------------------------------------------------------------- #

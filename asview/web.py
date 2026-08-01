@@ -110,6 +110,62 @@ def bundled_browser() -> str | None:
     return str(found[-1]) if found else None
 
 
+def film(trace: Path, out: Path, size: tuple[int, int] = (1600, 900),
+         ms_per_step: int = 700, hold_ms: int = 1500, axis: str = "collapsed",
+         browser: str | None = None) -> None:
+    """Step through a whole recording with the browser recording video.
+
+    playwright writes webm when the context closes; anything else is left to
+    ffmpeg, which is asked for by the suffix of `out`.
+    """
+    import shutil
+    import subprocess
+    import tempfile
+    from playwright.sync_api import sync_playwright
+
+    with Serving(trace) as serving, sync_playwright() as play, \
+            tempfile.TemporaryDirectory() as scratch:
+        chromium = play.chromium.launch(executable_path=browser or bundled_browser())
+        try:
+            view = {"width": size[0], "height": size[1]}
+            context = chromium.new_context(viewport=view, record_video_dir=scratch,
+                                           record_video_size=view)
+            page = context.new_page()
+            problems: list[str] = []
+            page.on("pageerror", lambda e: problems.append(str(e)))
+            page.goto(serving.url(trace=TRACE_URL.lstrip("/"), axis=axis))
+            page.wait_for_selector("#log-scroll .log-row")
+            steps = page.locator("#log-scroll .log-row").count()
+
+            page.wait_for_timeout(hold_ms)
+            for _ in range(steps - 1):
+                page.keyboard.press("ArrowRight")
+                page.wait_for_timeout(ms_per_step)
+            page.wait_for_timeout(hold_ms)
+
+            source = Path(page.video.path())
+            context.close()             # only now is the file complete
+            if problems:
+                raise RuntimeError("; ".join(problems))
+        finally:
+            chromium.close()
+
+        out.parent.mkdir(parents=True, exist_ok=True)
+        if out.suffix == ".webm":
+            shutil.copyfile(source, out)
+            return
+        if shutil.which("ffmpeg") is None:
+            raise RuntimeError(f"ffmpeg is needed to write {out.suffix}; "
+                               f"ask for a .webm instead")
+        done = subprocess.run(
+            ["ffmpeg", "-y", "-loglevel", "error", "-i", str(source),
+             "-c:v", "libx264", "-preset", "slow", "-crf", "26",
+             "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(out)],
+            capture_output=True, text=True)
+        if done.returncode != 0:
+            raise RuntimeError(f"ffmpeg failed: {done.stderr.strip()}")
+
+
 def screenshot(trace: Path, out: Path, event: int | None = None,
                axis: str = "collapsed", size: tuple[int, int] = (1600, 900),
                browser: str | None = None, full: bool = False,

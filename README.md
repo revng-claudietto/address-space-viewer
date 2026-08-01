@@ -8,6 +8,15 @@ the exact change each syscall made to it.  The result is a replay -- start from
 nothing, apply every event's delta in order, and you have the layout at that
 point in time -- which is what `viewer/index.html` animates.
 
+<video src="https://github.com/revng-claudietto/address-space-viewer/releases/download/demo/address-space.mp4" poster="https://github.com/revng-claudietto/address-space-viewer/releases/download/demo/poster.png"
+       controls muted loop width="900"></video>
+
+[The recording above as a file](https://github.com/revng-claudietto/address-space-viewer/releases/download/demo/address-space.mp4), if it does not play
+here.  It is `demo/demo.c` -- sixty lines that reserve, commit, protect,
+name, grow, move, share, fork and release -- rebuilt and re-filmed by CI from
+every push, along with [the JSON it plays](https://github.com/revng-claudietto/address-space-viewer/releases/download/demo/demo.json), which you can
+drop on the viewer yourself.
+
 ```console
 $ ./as-trace record -o run.json -- ./myprogram --with args
 as-trace: 54 events, 1 address space(s), peak 42 regions; the program exited with 0
@@ -109,6 +118,7 @@ as-trace parse LOG [options]                    convert an existing strace log
 as-trace summary run.json [--regions]           print a timeline as text
 as-trace view run.json [--axis MODE]            serve the viewer and open it
 as-trace shot run.json -o out.png [--event N]   draw one step, headless
+as-trace film run.json -o out.mp4               step through it, on video
 ```
 
 `parse` reads a log made with `strace -f -ttt -y`; it has no snapshot, so the
@@ -129,6 +139,7 @@ disagreement lands in `checks`.
 | `--indent N` | `0` for one line |
 | `--port N` / `--no-open` | for `view`: which port, and whether to open a browser |
 | `--event N` / `--size WxH` | for `shot`: which step to draw, and how large |
+| `--ms N` / `--hold N` | for `film`: dwell per step, and pause at each end |
 
 
 ## The viewer
@@ -369,13 +380,35 @@ The package is the command and the viewer together; `strace` comes with it.
 chromium -- which the tool finds through `PLAYWRIGHT_BROWSERS_PATH`.
 
 
+## The demo
+
+`demo/demo.c` exists to have an interesting address space and nothing else:
+it reserves sixty-four pages with no access, commits the middle of them,
+names them, turns one page into code, maps its own image, maps a page
+shared, grows the heap past what malloc keeps in hand, grows one mapping
+where it stands and moves another, forks, and gives it all back.  Every line
+of it is a box that moves.
+
+```console
+$ tools/demo-video.sh out      # builds it, records it, films the playback
+```
+
+The end-to-end tests record it and check that each of those arrives as
+itself -- a region with no access, one that ends up executable, one carrying
+the name the program gave it, a shared one, an mremap that grew in place and
+one that had to move, and a child whose space is a copy of its parent's,
+region for region.
+
+
 ## Tests
 
 ```console
 $ python3 -m unittest discover -s tests
-Ran 71 tests in 1.5s
+Ran 72 tests in 1.9s
 OK
 ```
+
+Add `libdebug` and it is 79: every end-to-end test runs once per backend.
 
 The parser and the model are driven by hand-written traces, which is the only
 way to reach what a live program will not produce on demand: a failing

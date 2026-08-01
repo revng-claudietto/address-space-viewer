@@ -4,3 +4,7 @@ __pycache__/
 # nix build
 /result
 /result-*
+
+# what tools/demo-video.sh writes
+/out/
+/demo/demo

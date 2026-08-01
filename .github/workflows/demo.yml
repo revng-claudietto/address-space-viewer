@@ -1,0 +1,80 @@
+name: demo
+
+# Record the demo program, film the viewer playing it back, and keep the
+# result attached to a release under a fixed tag, so the URL in the README
+# never changes.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install what the recorder needs
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y strace
+          pip install pyelftools
+      - name: Run the suite against the strace backend
+        run: python -m unittest discover -s tests -v
+
+  tests-libdebug:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install what libdebug needs to build
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libdwarf-dev libelf-dev libiberty-dev \
+            linux-headers-generic
+          pip install pyelftools -r requirements-libdebug.txt
+      - name: Run the suite against both backends
+        run: python -m unittest discover -s tests -v
+
+  film:
+    needs: tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install what the recorder and the browser need
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y strace ffmpeg
+          pip install pyelftools playwright
+          playwright install --with-deps chromium
+      - name: Build, record and film
+        run: tools/demo-video.sh out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: address-space-demo
+          path: out/
+          if-no-files-found: error
+
+      - name: Attach it to the demo release
+        if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view demo >/dev/null 2>&1 || gh release create demo \
+            --title "Demo recording" \
+            --notes "The viewer playing back a recording of demo/demo.c.
+          Rebuilt from master on every push; the URLs under this tag are stable."
+          gh release upload demo \
+            out/address-space.mp4 out/poster.png out/demo.json --clobber

@@ -601,6 +601,19 @@ class Elf(unittest.TestCase):
 # echo it is matters.  A build sandbox has none of them, hence the guard.
 NEEDED = ["/bin/sh", "/bin/echo", "/bin/cat"]
 
+DEMO = os.path.join(ROOT, "demo", "demo.c")
+
+
+def build_demo(into: str) -> str | None:
+    """Compile the demo program, or say there is nothing to compile with."""
+    compiler = os.environ.get("CC") or shutil.which("cc") or shutil.which("gcc")
+    if compiler is None or not os.path.exists(DEMO):
+        return None
+    out = os.path.join(into, "demo")
+    done = subprocess.run([compiler, "-O0", "-g", "-o", out, DEMO],
+                          capture_output=True, text=True)
+    return out if done.returncode == 0 else None
+
 
 @unittest.skipUnless(os.path.exists("/proc/self/maps"), "/proc is not mounted")
 @unittest.skipUnless(all(map(os.path.exists, NEEDED)),
@@ -689,6 +702,66 @@ class EndToEnd(unittest.TestCase):
     def test_the_exit_code_is_reported(self):
         doc = self.record("--", "/bin/sh", "-c", "exit 3")
         self.assertEqual(doc["target"]["exit_code"], 3)
+
+    def test_the_demo_does_everything_it_says_it_does(self):
+        """The demo program is a list of things a process can do to its own
+        memory; each one has to arrive in the recording as itself."""
+        with tempfile.TemporaryDirectory() as where:
+            demo = build_demo(where)
+            if demo is None:
+                self.skipTest("no C compiler to build the demo with")
+            doc = self.record("--", demo)
+
+        self.assertEqual(doc["target"]["exit_code"], 0)
+        events = doc["events"]
+
+        # fork gives the child a copy of the whole space, region for region.
+        self.assertEqual(len(doc["spaces"]), 2)
+        parent, live, copied = events[0]["space"], set(), None
+        for event in events:
+            if event.get("space_created") and event["space"] != parent:
+                copied = len(event["delta"]["added"])
+                break
+            if event["space"] != parent:
+                continue
+            delta = event.get("delta") or {}
+            live.difference_update(delta.get("removed", []))
+            live.update(r["id"] for r in delta.get("added", []))
+        self.assertEqual(copied, len(live))
+        self.assertGreater(copied, 20)
+
+        # Every kind of change the viewer draws differently.
+        kinds = {e["category"] for e in events}
+        self.assertLessEqual({"map", "unmap", "protect", "remap", "brk",
+                              "annotate", "process"}, kinds)
+
+        regions = [r for e in events for r in (e.get("delta") or {}).get("added", [])]
+        self.assertTrue([r for r in regions if r["prot"] == "---"],
+                        "the reservation should arrive with no access")
+        self.assertTrue([r for r in regions if r["prot"] == "r-x"
+                         and not r.get("path")],
+                        "a page of the arena should end up executable")
+        self.assertIn("demo arena", [r.get("name") for r in regions])
+        self.assertTrue([r for r in regions if r.get("path") == demo],
+                        "the program maps its own image")
+        self.assertTrue([r for r in regions if r["shared"]],
+                        "one mapping is shared")
+
+        # One mremap grows where it stands, the other has to move.
+        remaps = [e for e in events if e["category"] == "remap" and e.get("delta")]
+        self.assertEqual(len(remaps), 2)
+        moved = [e for e in remaps if e["result"] != e["args"]["old_addr"]]
+        grew = [e for e in remaps if e["result"] == e["args"]["old_addr"]]
+        self.assertEqual((len(grew), len(moved)), (1, 1))
+        for e in remaps:
+            self.assertGreater(e["args"]["new_size"], e["args"]["old_size"])
+
+        # And the hole punched out of the middle of the arena leaves the two
+        # halves behind rather than taking the whole thing.
+        hole = [e for e in events if e["category"] == "unmap"
+                and len(e["delta"]["added"]) == 1
+                and len(e["delta"]["removed"]) == 1]
+        self.assertTrue(hole, "munmap of the middle should split what was there")
 
 
 class EndToEndWithLibdebug(EndToEnd):
