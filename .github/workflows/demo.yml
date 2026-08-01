@@ -62,7 +62,7 @@ jobs:
       - name: Install what the recorder and the browser need
         run: |
           sudo apt-get update
-          sudo apt-get install -y strace ffmpeg
+          sudo apt-get install -y strace ffmpeg webp
           pip install pyelftools playwright
           playwright install --with-deps chromium
       - name: Build, record and film

@@ -37,6 +37,7 @@
             pkgs.strace
             pkgs.playwright-driver.browsers
             pkgs.ffmpeg
+            pkgs.libwebp
           ];
           env = {
             PLAYWRIGHT_BROWSERS_PATH = "${pkgs.playwright-driver.browsers}";

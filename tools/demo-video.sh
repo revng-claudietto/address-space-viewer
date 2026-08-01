@@ -46,19 +46,17 @@ echo "filming the whole timeline"
 # render is an image in the repository, so the same recording is filmed
 # again as an animation.
 #
-# Animated webp rather than gif: gif has 256 colours to spend on a dark
-# panel full of antialiased text, and paying for legibility in palette
-# entries costs more than it is worth.
+# Animated webp, and lossless.  gif has 256 colours to spend on a dark
+# panel full of antialiased text; lossy webp spends its error budget on the
+# edges of glyphs, which is exactly where it shows.  Neither is worth it for
+# a picture whose whole content is small text, so nothing is thrown away.
 #
-# Two things this format is spent on, in order.  It is filmed at the width
-# it is drawn at, because scaling a screenful of 10px text to seventy per
-# cent is what made the first attempt unreadable.  And the quality is high,
-# because lossy compression puts its error exactly where the eye is -- on
-# the edges of glyphs.  What is given up for both is frames: eight a second
-# rather than ten, over fifteen steps rather than forty-one.  Lossless webp
-# would keep every pixel and is thirty-three megabytes, which is not a
-# README.
-if command -v ffmpeg >/dev/null 2>&1; then
+# Two things make that affordable.  img2webp rather than ffmpeg's muxer,
+# because it writes each frame as a difference against the last -- the same
+# picture costs 12 MB that way and 33 MB without.  And frames are what is
+# given up instead of pixels: six a second over fifteen steps, rather than
+# the ten a second over forty-one that the video on the release has.
+if command -v ffmpeg >/dev/null 2>&1 && command -v img2webp >/dev/null 2>&1; then
 	# The demo's own work starts where it reserves its arena, which is the
 	# only PROT_NONE mapping in the recording.  Fifteen steps from there is
 	# the whole of what the program does to its own memory.
@@ -74,9 +72,13 @@ print(max(0, start - 1))")
 	"$here/as-trace" film "$out/demo.json" -o "$scratch/short.webm" \
 		--size 1280x720 --ms "${LOOP_MS:-420}" --hold 900 \
 		--from "$from" --to "$((from + 15))"
-	ffmpeg -v error -y -i "$scratch/short.webm" -vf fps=8 \
-		-c:v libwebp -lossless 0 -q:v 85 -preset picture -loop 0 -an \
-		"$out/address-space.webp"
+
+	fps=${LOOP_FPS:-6}
+	mkdir -p "$scratch/frames"
+	ffmpeg -v error -y -i "$scratch/short.webm" -vf "fps=$fps" \
+		"$scratch/frames/f%04d.png"
+	img2webp -loop 0 -d $((1000 / fps)) -lossless -m 6 -min_size \
+		"$scratch"/frames/*.png -o "$out/address-space.webp"
 fi
 
 ls -l "$out"
