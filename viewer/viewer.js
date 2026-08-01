@@ -65,9 +65,10 @@ var LOG_ROW = 25;          // must match --log-row in viewer.css
 var MS_PER_STEP = 900;
 var MAX_CHANGES = 24;      // a fork copies the lot; the list is not the point
 var MAX_TICKS = 320;       // as many ticks as the scrub bar can show apart
-var FLOOR_SHARE = 0.6;     // of the map's height that floors may take between them
+var FLOOR_SHARE = 0.7;     // of the map's height that floors may take between them
+var GAP_FLOOR = 11;        // px an unmapped stretch keeps: enough to label it
 var BLOCK_ROW = 21;        // px a mapping inside a block always gets
-var FLOOR_ROWS = 4;        // rows of a block that fit before it has to scroll
+var FLOOR_ROWS = 3;        // rows of a block that fit before it has to scroll
 var MIN_SLOT = 3;          // px, when even the floors have to be squeezed
 
 // Which event speaks for a run of them, when one tick has to cover several.
@@ -421,13 +422,35 @@ function computeLayout(model, sid, mode, H) {
     for (var k = at[inst[i].start]; k < at[inst[i].end]; k++) covered[k] = true;
   }
 
+  // What backs each stretch, and where it is not allowed to be cut.  A block
+  // is contiguous memory behind one file -- or behind no file, which is a
+  // kind of backing too -- so libc and the loader beside it are two blocks
+  // rather than one long one.  The cut can only fall where no mapping
+  // straddles it, or a mapping would end up belonging to two blocks.
+  var backing = new Array(bs.length - 1);
+  var welded = {};
+  for (i = 0; i < inst.length; i++) {
+    var of = inst[i].object || inst[i].path || '';
+    for (k = at[inst[i].start]; k < at[inst[i].end]; k++) {
+      if (!backing[k]) backing[k] = [];
+      if (backing[k].indexOf(of) < 0) backing[k].push(of);
+      if (k > at[inst[i].start]) welded[bs[k]] = true;
+    }
+  }
+  var keyOf = function (j) {
+    return backing[j] ? backing[j].slice().sort().join(' ') : '';
+  };
+
   var linear = mode === 'linear', log = mode === 'log';
   var exp = linear ? 1 : 0.42;
-  var items = [], run = null;
+  var items = [], run = null, was = null;
   for (i = 0; i < bs.length - 1; i++) {
     var size = Number(big(bs[i + 1]) - big(bs[i]));
     var w = Math.pow(size, exp);
     if (covered[i]) {
+      var key = keyOf(i);
+      if (run && key !== was && !welded[bs[i]]) run = null;
+      was = key;
       if (!run) {
         run = { start: bs[i], end: bs[i + 1], min: BLOCK_ROW, w: 0, parts: [] };
         items.push(run);
@@ -438,6 +461,7 @@ function computeLayout(model, sid, mode, H) {
       run.parts.push({ addr: bs[i], next: bs[i + 1], size: size, w: w });
     } else {
       run = null;
+      was = null;
       var gap = {
         gap: true, size: size,
         min: linear ? 2 : log ? 14
@@ -458,55 +482,81 @@ function computeLayout(model, sid, mode, H) {
 
   // Enough floors would fill the panel on their own and leave every block
   // the same height, which is the one thing the map is for.  They are held
-  // to a share of it; the rest is handed out by size.
-  var minTotal = items.reduce(function (s, it) { return s + it.min; }, 0);
+  // to a share of it, and the holes give way first: an unmapped stretch is
+  // context, the mappings are the point.
+  var floors = function (of) {
+    return of.reduce(function (s, it) { return s + it.min; }, 0);
+  };
   var room = H * FLOOR_SHARE;
-  if (minTotal > room) {
-    var squeeze = room / minTotal;
-    minTotal = 0;
-    items.forEach(function (it) {
-      it.min = Math.max(MIN_SLOT, it.min * squeeze);
-      minTotal += it.min;
-    });
+  if (floors(items) > room) {
+    var spare = Math.max(0, room - floors(lay.runs));
+    var thinner = floors(lay.gaps) ? Math.min(1, spare / floors(lay.gaps)) : 1;
+    lay.gaps.forEach(function (g) { g.min = Math.max(GAP_FLOOR, g.min * thinner); });
+    if (floors(items) > room) {
+      var squeeze = room / floors(items);
+      items.forEach(function (it) { it.min = Math.max(MIN_SLOT, it.min * squeeze); });
+    }
   }
+  var minTotal = floors(items);
   var weight = items.reduce(function (s, it) { return s + it.w; }, 0) || 1;
   var k2 = Math.max(0, H - minTotal) / weight;
 
   var y = 0;
-  items.forEach(function (it) {
+  items.forEach(function (it, index) {
     it.top = y;
     it.h = it.min + it.w * k2;
-    if (it.gap) it.labeled = it.h >= 13 && it.size >= 1048576;
+    if (it.gap) it.labeled = it.h >= GAP_FLOOR && it.size >= 1048576;
+    // Two blocks that touch share an address; the gutter prints it once.
+    else it.chainEnd = !items[index + 1] || !!items[index + 1].gap;
     y += it.h;
   });
   lay.total = y;
 
   lay.runs.forEach(function (r, index) {
     var sum = r.parts.reduce(function (s, p) { return s + p.w; }, 0) || 1;
-    var inner = 0;
+    var heights = r.parts.map(function (p) {
+      return Math.max(BLOCK_ROW, r.h * p.w / sum);
+    });
+    var inner = heights.reduce(function (s, h) { return s + h; }, 0);
+    // A block that wants a couple of pixels more than it has is not worth
+    // scrolling; give the rows back those pixels instead.
+    if (inner > r.h && inner <= r.h + BLOCK_ROW / 4) {
+      var fit = r.h / inner;
+      heights = heights.map(function (h) { return h * fit; });
+      inner = r.h;
+    }
+    var y2 = 0;
     r.pos = {};
-    r.parts.forEach(function (p) {
-      r.pos[p.addr] = inner;
-      inner += Math.max(BLOCK_ROW, r.h * p.w / sum);
+    r.parts.forEach(function (p, j) {
+      r.pos[p.addr] = y2;
+      y2 += heights[j];
       lay.where[p.addr] = index;
     });
     r.pos[r.end] = inner;
     r.content = inner;
     r.scrolls = inner > r.h + 1;
 
+    // A block is named after what backs it, which now needs no guessing.
+    // Only a block backed by nothing has to be named from its mappings --
+    // [heap], [stack], [vvar] + [vdso], or just anonymous.
+    var files = [];
+    r.parts.forEach(function (p) {
+      (backing[at[p.addr]] || []).forEach(function (f) {
+        if (f && files.indexOf(f) < 0) files.push(f);
+      });
+    });
+    if (files.length) {
+      r.title = files.map(basename).slice(0, 2).join(' + ');
+      return;
+    }
     var a = big(r.start), b = big(r.end), names = [];
     for (var j = 0; j < inst.length; j++) {
       var x = inst[j];
       if (x._s < a || x._e > b) continue;
-      var n = x.path ? basename(x.path)
-        : (/^\[[^\]]+\]/.exec(x.label) || [null])[0] || x.label;
+      var n = (/^\[[^\]]+\]/.exec(x.label) || [null])[0] || x.label;
       if (n && names.indexOf(n) < 0) names.push(n);
     }
-    var pick = null;
-    for (var m = 0; m < names.length; m++) {
-      if (names[m].indexOf('.so') >= 0 || names[m][0] !== '[') { pick = names[m]; break; }
-    }
-    r.title = pick && names.length > 1 ? pick : names.slice(0, 2).join(' + ');
+    r.title = names.slice(0, 2).join(' + ');
   });
   return lay;
 }
@@ -1008,7 +1058,7 @@ function drawMap(sid, lay) {
     if (r.h < 20) title.style.opacity = '0';
     rail.appendChild(title);
     var bottom = el('span', 'addr bottom', shortAddr(r.end));
-    if (!tall) bottom.style.opacity = '0';
+    if (!tall || !r.chainEnd) bottom.style.opacity = '0';
     rail.appendChild(bottom);
     if (r.scrolls && r.h >= 40) {
       rail.appendChild(el('span', 'more', '⇕ ' + r.parts.length));
@@ -1094,11 +1144,13 @@ function updateMap() {
     model.changesAt(state.idx).forEach(function (c) { marks[c.id] = c.type; });
   }
 
+  // Two mappings are drawn as one run of colour when they touch -- but only
+  // inside a block, so where one block ends and the next begins is visible.
   var joinAbove = {}, joinBelow = {};
   cur.forEach(function (r, i) {
-    var p = cur[i - 1], n = cur[i + 1];
-    if (p && p.end === r.start) joinAbove[r.id] = true;
-    if (n && n.start === r.end) joinBelow[r.id] = true;
+    var p = cur[i - 1], n = cur[i + 1], mine = lay.where[r.start];
+    if (p && p.end === r.start && lay.where[p.start] === mine) joinAbove[r.id] = true;
+    if (n && n.start === r.end && lay.where[n.start] === mine) joinBelow[r.id] = true;
   });
 
   var picked = state.hover || state.pick;

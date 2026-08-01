@@ -123,13 +123,20 @@ span -- the 24 TiB between the heap and the libraries is real, and drawing
 it to scale would leave nothing else on screen.  `LOG` and `LINEAR` give the
 axis back some or all of its true proportions.
 
+A **block** is a contiguous stretch of memory behind one file -- or behind
+no file, which is a kind of backing too -- so libc and the loader beside it
+are two blocks rather than one long one, each named on its rail after what
+backs it.  The one thing that overrides the split is a mapping lying across
+it: a block is never cut where that would put one mapping in two of them.
+
 Two scales come out of the map being exactly one window tall.  The outer one
-hands that height to each contiguous block of mapped memory by size, and it
-is what the eye reads.  The inner one gives every mapping inside a block a
-readable line whatever its size -- so when a block holds more mappings than
-its share of the window has room for, the block scrolls, marked `⇕ n` on its
-rail.  Nothing is dropped to make things fit, and looking inside one block
-moves nothing outside it.
+hands that height to the blocks by size, and it is what the eye reads.  The
+inner one gives every mapping inside a block a readable line whatever its
+size -- so when a block holds more mappings than its share of the window has
+room for, the block scrolls, marked `⇕ n` on its rail.  Nothing is dropped to
+make things fit, and looking inside one block moves nothing outside it.  When
+even the floors do not fit, the unmapped stretches give way first: a hole is
+context, the mappings are the point.
 
 Blue is file-backed, brown anonymous, orange the kernel's own pages; a
 hatched box is executable, a dashed one has no access at all.  A file-backed
