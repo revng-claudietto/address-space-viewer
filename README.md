@@ -19,8 +19,10 @@ which you can drop on the viewer yourself.  The animation above is the
 fifteen steps in the middle of it, where the program is working on its own
 memory rather than being loaded; a README will not play a video, since
 GitHub keeps `<video>` only for files uploaded to GitHub itself.  It is 800
-pixels wide because that is the width it is shown at, and every pixel of it
-is the one the browser drew.
+pixels wide because that is the width it is shown at: the page is laid out
+for that window rather than laid out wide and shrunk into it, so every glyph
+is drawn at the size it is read at and nothing is resampled on the way to
+the screen.
 
 
 ## Getting started
@@ -99,7 +101,9 @@ page also takes `?trace=`, `&axis=`, `&event=` and `&autoplay` directly.
 The map is the address space, low addresses at top, and it owns the full
 height of the window: everything else is in the column beside it, so nothing
 is stacked above or below the one panel whose whole point is vertical
-extent.  Every address a region ever occupied keeps its place for the whole
+extent.  Below about a thousand pixels that column stacks its two panels
+instead of setting them side by side, and the parts of the chrome that
+repeat what is on screen give way.  Every address a region ever occupied keeps its place for the whole
 recording, so a mapping never shifts sideways to make room for one that
 appears later: what moves is what the program moved.  The unmapped stretches
 between them are collapsed to a fixed height and labelled with what they

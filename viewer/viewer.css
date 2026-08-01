@@ -781,6 +781,54 @@ button { font-family: inherit; }
 .info-body .jump { color: var(--blue); cursor: pointer; }
 .info-body .jump:hover { color: var(--sky); }
 
+/* --------------------------------------------------------------------- */
+/* Narrow windows                                                         */
+/* --------------------------------------------------------------------- */
+
+/* Under about a thousand pixels the column beside the map cannot hold two
+   panels side by side, so they stack, and the parts of the chrome that
+   repeat what is already on screen give way: the subtitle, the toolchain,
+   the byte count.  Nothing here scales anything -- the type stays the size
+   it was drawn to be read at, which is the whole point of laying out for
+   the window rather than laying out wide and shrinking. */
+@media (max-width: 1120px) {
+  :root { --side: 340px; --gutter: 96px; }
+
+  .app { min-width: 0; }
+
+  .brand-sub, #hdr-arch, #hdr-tool, .map-bar .counts { display: none; }
+  .ident .rule:nth-of-type(n + 2) { display: none; }
+  .topbar { padding: 7px 12px 8px; }
+  .map-bar, .log-panel .panel-head { padding: 0 12px; }
+
+  /* Stacked, and the trace gets a few rows rather than a third of the
+     column: what changed at this step is worth more of the height than
+     the list of steps, which the scrub bar covers anyway. */
+  .panes {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(0, 132px);
+  }
+  .event-panel {
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+  }
+  .panel-scroll { padding: 12px; }
+  .legend { padding: 8px 12px; gap: 4px 10px; }
+
+  .transport { padding: 8px 12px 10px; gap: 8px; }
+  /* The transport is five buttons, four speeds and a counter, which is
+     more than 340 pixels of row.  The speeds go: the keyboard steps, and
+     an animation nobody is driving does not need four of them. */
+  .deck { gap: 10px; }
+  .speeds { display: none; }
+  .counter-label { display: none; }
+  /* Two buttons and a title do not fit either; the title gives way to
+     them, since one of them is how a trace gets loaded at all. */
+  .topline { flex-wrap: wrap; }
+  .topline .brand-name { font-size: 11px; letter-spacing: 0.1em; }
+  .topline .chip-button { padding: 0 8px; letter-spacing: 0.06em; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .slot, .box, .tick, .log-row { transition: none; }
 }

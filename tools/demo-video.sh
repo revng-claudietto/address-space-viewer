@@ -66,14 +66,17 @@ print(max(0, start - 1))")
 	# 800 pixels wide, because that is under the width of the column a
 	# README is rendered in and so is shown at its own size -- an image
 	# wider than the column is resampled by the browser, which is the one
-	# scaling step that no encoder setting can undo.  The page is drawn at
-	# 800 rather than drawn at 1280 and shrunk: the viewer will not lay out
-	# below 1280, so the layout stays 1280 and the browser rasterises it
-	# onto 800 pixels, glyphs and all.
+	# scaling step no encoder setting can undo.
+	#
+	# 800 of layout, not 800 of shrunken 1280.  The type in the viewer is
+	# ten and eleven pixels; at 1280 laid out on 800 it comes out at seven,
+	# and seven pixel type is not clean however it is rasterised.  The page
+	# lays out for the window instead, and every glyph is drawn at the size
+	# it is read at.
 	fps=${LOOP_FPS:-6}
 	echo "photographing steps $from to $((from + 15)) again, for the README"
 	"$here/as-trace" film "$out/demo.json" -o "$scratch/short.mp4" \
-		--size 1280x720 --zoom "${LOOP_ZOOM:-0.625}" \
+		--size "${LOOP_SIZE:-800x760}" \
 		--ms "${LOOP_MS:-420}" --hold 900 --fps "$fps" \
 		--from "$from" --to "$((from + 15))" --keep-frames "$scratch/frames"
 	img2webp -loop 0 -d $((1000 / fps)) -lossless -m 6 -min_size \
