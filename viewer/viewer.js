@@ -182,9 +182,10 @@ function sectionsIn(raw, objects) {
 
 /* What a mapping holds, named without the file it comes from -- the block it
    sits in is named after that.  A mapping usually holds several sections
-   and is named after whichever fills most of it; the rest are in the detail
-   panel, under `holds`, rather than in a count on the box that reads like
-   an offset.
+   and all of them are named, on one line, the one that fills most of the
+   range first -- so that what the range mostly is survives being cut off
+   at the width of the box.  The detail panel lists them in the order they
+   are in memory instead, where there is room for all of them.
 
    The ELF header and the program headers sit at the object's base address
    and are in no section, so a range holding that address and mostly not
@@ -194,15 +195,20 @@ function sectionsIn(raw, objects) {
    one, does hold the base but is mostly .text, and is named after that. */
 function whatIsIn(r) {
   if (r.name) return r.name;
-  var top = null, best = -1, accounted = 0;
+  var accounted = 0, best = -1;
   r.sections.forEach(function (s) {
     accounted += s.overlap;
-    if (s.overlap > best) { best = s.overlap; top = s.name; }
+    if (s.overlap > best) best = s.overlap;
   });
-  if (r.holdsBase && r.sections.length && r.size - accounted > best) {
-    return 'ELF headers';
+  var named = r.sections.slice()
+    .sort(function (x, y) { return y.overlap - x.overlap; })
+    .map(function (s) { return s.name; });
+  if (r.holdsBase && named.length && r.size - accounted > best) {
+    // The header and the program headers are in no section and are most of
+    // what this range is; the sections that came with them follow.
+    return ['ELF headers'].concat(named).join(' ');
   }
-  if (top) return top;
+  if (named.length) return named.join(' ');
   if (r.holdsBase && r.path) return 'ELF headers';
   if (r.zero_fill) return '.bss';
   if (r.path) return basename(r.path);
