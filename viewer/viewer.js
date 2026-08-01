@@ -65,6 +65,10 @@ var LOG_ROW = 25;          // must match --log-row in viewer.css
 var MS_PER_STEP = 900;
 var MAX_CHANGES = 24;      // a fork copies the lot; the list is not the point
 var MAX_TICKS = 320;       // as many ticks as the scrub bar can show apart
+var FLOOR_SHARE = 0.6;     // of the map's height that floors may take between them
+var BLOCK_ROW = 21;        // px a mapping inside a block always gets
+var FLOOR_ROWS = 4;        // rows of a block that fit before it has to scroll
+var MIN_SLOT = 3;          // px, when even the floors have to be squeezed
 
 // Which event speaks for a run of them, when one tick has to cover several.
 var TICK_RANK = ['exec', 'fork', 'exit', 'signal', 'unmap', 'remap', 'protect',
@@ -389,6 +393,14 @@ function changesAt(model, i) {
 // one that appears later.  Between those, unmapped stretches are collapsed
 // to a fixed height -- the distance from the heap to the stack is real but
 // not interesting, and drawing it to scale leaves nothing else visible.
+//
+// The map as a whole is exactly the height of its panel.  Two scales come
+// out of that.  The outer one hands the panel out to contiguous blocks of
+// mapped memory by size, and it is what the eye reads.  The inner one gives
+// each mapping inside a block a readable line whatever its size, so a block
+// whose mappings want more room than the outer scale gave it holds them all
+// and scrolls.  Nothing is ever left out, and looking inside one block does
+// not move any of the others.
 // --------------------------------------------------------------------------
 
 function computeLayout(model, sid, mode, H) {
@@ -399,7 +411,7 @@ function computeLayout(model, sid, mode, H) {
     var x = big(a), y = big(b);
     return x < y ? -1 : x > y ? 1 : 0;
   });
-  var lay = { mode: mode, H: H, pos: {}, runs: [], gaps: [], total: H };
+  var lay = { mode: mode, H: H, runs: [], gaps: [], where: {}, total: H };
   if (bs.length < 2) return lay;
 
   var at = {};
@@ -411,46 +423,83 @@ function computeLayout(model, sid, mode, H) {
 
   var linear = mode === 'linear', log = mode === 'log';
   var exp = linear ? 1 : 0.42;
-  var iv = [];
+  var items = [], run = null;
   for (i = 0; i < bs.length - 1; i++) {
     var size = Number(big(bs[i + 1]) - big(bs[i]));
-    var v = { addr: bs[i], next: bs[i + 1], size: size, covered: !!covered[i] };
-    if (v.covered) { v.min = linear ? 3 : 22; v.w = Math.pow(size, exp); }
-    else if (linear) { v.min = 2; v.w = size; }
-    else if (log) { v.min = 14; v.w = Math.pow(size, exp) * 0.3; }
-    else { v.min = 14 + Math.max(0, Math.min(22, Math.log2(size) - 20)); v.w = 0; }
-    iv.push(v);
-  }
-
-  var minTotal = iv.reduce(function (s, v) { return s + v.min; }, 0);
-  var weight = iv.reduce(function (s, v) { return s + v.w; }, 0) || 1;
-  var target = Math.max(H, minTotal + (linear ? 0 : 440));
-  var k2 = Math.max(0, target - minTotal) / weight;
-
-  var y = 0, run = null;
-  iv.forEach(function (v) {
-    lay.pos[v.addr] = y;
-    var h = v.min + v.w * k2;
-    if (v.covered) {
-      if (!run) { run = { top: y, start: v.addr, end: v.next, h: 0 }; lay.runs.push(run); }
-      run.end = v.next;
-      run.h = y + h - run.top;
+    var w = Math.pow(size, exp);
+    if (covered[i]) {
+      if (!run) {
+        run = { start: bs[i], end: bs[i + 1], min: BLOCK_ROW, w: 0, parts: [] };
+        items.push(run);
+        lay.runs.push(run);
+      }
+      run.end = bs[i + 1];
+      run.w += w;
+      run.parts.push({ addr: bs[i], next: bs[i + 1], size: size, w: w });
     } else {
       run = null;
-      lay.gaps.push({ top: y, h: h, size: v.size,
-                      labeled: h >= 13 && v.size >= 1048576 });
+      var gap = {
+        gap: true, size: size,
+        min: linear ? 2 : log ? 14
+          : 14 + Math.max(0, Math.min(22, Math.log2(size) - 20)),
+        w: linear ? w : log ? w * 0.3 : 0
+      };
+      items.push(gap);
+      lay.gaps.push(gap);
     }
-    y += h;
+  }
+
+  // A block's floor is a few rows' worth, so a small object with four
+  // mappings does not have to be scrolled to be read while a large one is
+  // still sized by how large it is.
+  lay.runs.forEach(function (r) {
+    r.min = Math.min(r.parts.length, FLOOR_ROWS) * BLOCK_ROW;
   });
-  lay.pos[bs[bs.length - 1]] = y;
+
+  // Enough floors would fill the panel on their own and leave every block
+  // the same height, which is the one thing the map is for.  They are held
+  // to a share of it; the rest is handed out by size.
+  var minTotal = items.reduce(function (s, it) { return s + it.min; }, 0);
+  var room = H * FLOOR_SHARE;
+  if (minTotal > room) {
+    var squeeze = room / minTotal;
+    minTotal = 0;
+    items.forEach(function (it) {
+      it.min = Math.max(MIN_SLOT, it.min * squeeze);
+      minTotal += it.min;
+    });
+  }
+  var weight = items.reduce(function (s, it) { return s + it.w; }, 0) || 1;
+  var k2 = Math.max(0, H - minTotal) / weight;
+
+  var y = 0;
+  items.forEach(function (it) {
+    it.top = y;
+    it.h = it.min + it.w * k2;
+    if (it.gap) it.labeled = it.h >= 13 && it.size >= 1048576;
+    y += it.h;
+  });
   lay.total = y;
 
-  lay.runs.forEach(function (r) {
+  lay.runs.forEach(function (r, index) {
+    var sum = r.parts.reduce(function (s, p) { return s + p.w; }, 0) || 1;
+    var inner = 0;
+    r.pos = {};
+    r.parts.forEach(function (p) {
+      r.pos[p.addr] = inner;
+      inner += Math.max(BLOCK_ROW, r.h * p.w / sum);
+      lay.where[p.addr] = index;
+    });
+    r.pos[r.end] = inner;
+    r.content = inner;
+    r.scrolls = inner > r.h + 1;
+
     var a = big(r.start), b = big(r.end), names = [];
     for (var j = 0; j < inst.length; j++) {
       var x = inst[j];
       if (x._s < a || x._e > b) continue;
-      var n = x.path ? basename(x.path) : (/^\[[^\]]+\]/.exec(x.label) || [null])[0] || x.label;
+      var n = x.path ? basename(x.path)
+        : (/^\[[^\]]+\]/.exec(x.label) || [null])[0] || x.label;
       if (n && names.indexOf(n) < 0) names.push(n);
     }
     var pick = null;
@@ -482,8 +531,8 @@ var state = {
 };
 
 var slots = {};            // region id -> the nodes that draw it
-var decor = null;          // runs and gaps, redrawn only when the axis changes
-var drawnLayout = null;
+var drawnLayout = null;    // what the map is currently drawn from
+var drawnSpace = null;
 var logRows = [];
 var tickNodes = [];
 
@@ -547,7 +596,8 @@ function load(doc, name) {
   buildTicks(model);
   buildMarkers(model);
   buildInfo(model);
-  buildSlots();
+  drawnLayout = null;
+  drawnSpace = null;
   measure();
   render();
 
@@ -648,7 +698,6 @@ function buildChips(model) {
       state.space = id;
       state.follow = false;
       state.pick = null;
-      buildSlots();
       render();
     });
     box.appendChild(chip);
@@ -929,28 +978,75 @@ function layoutFor(sid) {
   return cache[key];
 }
 
-function buildSlots() {
+function drawMap(sid, lay) {
   var canvas = $('map-canvas');
   canvas.textContent = '';
+  canvas.style.height = Math.round(lay.total) + 'px';
   slots = {};
-  drawnLayout = null;
 
-  decor = el('div');
-  decor.style.cssText = 'position:absolute;inset:0;';
-  canvas.appendChild(decor);
+  lay.gaps.forEach(function (g) {
+    var node = el('div', 'gap');
+    node.style.top = g.top + 'px';
+    node.style.height = g.h + 'px';
+    node.appendChild(el('span', 'dashes'));
+    if (g.labeled) {
+      node.appendChild(el('span', 'gap-label', fmtSize(g.size) + ' unmapped'));
+      node.appendChild(el('span', 'dashes'));
+    }
+    canvas.appendChild(node);
+  });
 
-  var first = state.model.firstSeen[state.space] || {};
+  var inners = lay.runs.map(function (r) {
+    var tall = r.h >= 34;
+    var rail = el('div', 'run');
+    rail.style.top = r.top + 'px';
+    rail.style.height = r.h + 'px';
+    rail.appendChild(el('span', 'rail'));
+    rail.appendChild(el('span', 'addr top', shortAddr(r.start)));
+    var title = el('span', 'run-title', r.title || '');
+    title.style.fontSize = (tall ? 11 : 10) + 'px';
+    if (r.h < 20) title.style.opacity = '0';
+    rail.appendChild(title);
+    var bottom = el('span', 'addr bottom', shortAddr(r.end));
+    if (!tall) bottom.style.opacity = '0';
+    rail.appendChild(bottom);
+    if (r.scrolls && r.h >= 40) {
+      rail.appendChild(el('span', 'more', '⇕ ' + r.parts.length));
+    }
+    canvas.appendChild(rail);
+
+    var block = el('div', 'block' + (r.scrolls ? ' scrolls' : ''));
+    block.style.top = r.top + 'px';
+    block.style.height = r.h + 'px';
+    if (r.scrolls) {
+      block.title = r.parts.length + ' mappings in ' +
+        fmtSize(Number(big(r.end) - big(r.start))) + ' — scroll to see them all';
+      // The fade at the foot of a block says there is more below it, so it
+      // goes away once there is not.
+      block.addEventListener('scroll', function () {
+        block.classList.toggle('at-end',
+          block.scrollTop + block.clientHeight >= block.scrollHeight - 1);
+      });
+    }
+    var inner = el('div', 'inner');
+    inner.style.height = Math.round(r.content) + 'px';
+    block.appendChild(inner);
+    canvas.appendChild(block);
+    return inner;
+  });
+
+  var first = state.model.firstSeen[sid] || {};
   Object.keys(first).forEach(function (id) {
+    var where = lay.where[first[id].start];
+    if (where === undefined) return;
     var slot = el('div', 'slot');
     var box = el('div', 'box');
-    var hatch = el('span', 'hatch');
     var label = el('span', 'box-label');
     var meta = el('span', 'box-meta');
     var perms = el('span', 'box-perms');
     var size = el('span', 'box-size');
     meta.appendChild(perms);
     meta.appendChild(size);
-    box.appendChild(hatch);
     box.appendChild(label);
     box.appendChild(meta);
     slot.appendChild(box);
@@ -970,40 +1066,9 @@ function buildSlots() {
       updateMap();
       renderDetail();
     });
-    canvas.appendChild(slot);
-    slots[id] = { slot: slot, box: box, hatch: hatch, label: label,
+    inners[where].appendChild(slot);
+    slots[id] = { slot: slot, box: box, label: label,
                   perms: perms, size: size, shown: null };
-  });
-}
-
-function drawDecor(lay) {
-  decor.textContent = '';
-  lay.gaps.forEach(function (g) {
-    var node = el('div', 'gap');
-    node.style.top = g.top + 'px';
-    node.style.height = g.h + 'px';
-    node.appendChild(el('span', 'dashes'));
-    if (g.labeled) {
-      node.appendChild(el('span', 'gap-label', fmtSize(g.size) + ' unmapped'));
-      node.appendChild(el('span', 'dashes'));
-    }
-    decor.appendChild(node);
-  });
-  lay.runs.forEach(function (r) {
-    var tall = r.h >= 34;
-    var node = el('div', 'run');
-    node.style.top = r.top + 'px';
-    node.style.height = r.h + 'px';
-    node.appendChild(el('span', 'rail'));
-    node.appendChild(el('span', 'addr top', shortAddr(r.start)));
-    var title = el('span', 'run-title', r.title || '');
-    title.style.fontSize = (tall ? 11 : 10) + 'px';
-    if (r.h < 20) title.style.opacity = '0';
-    node.appendChild(title);
-    var bottom = el('span', 'addr bottom', shortAddr(r.end));
-    if (!tall) bottom.style.opacity = '0';
-    node.appendChild(bottom);
-    decor.appendChild(node);
   });
 }
 
@@ -1011,10 +1076,10 @@ function updateMap() {
   var model = state.model, sid = state.space;
   if (!sid || !model.frames[sid]) return;
   var lay = layoutFor(sid);
-  if (lay !== drawnLayout) {
+  if (lay !== drawnLayout || sid !== drawnSpace) {
     drawnLayout = lay;
-    $('map-canvas').style.height = Math.round(lay.total) + 'px';
-    drawDecor(lay);
+    drawnSpace = sid;
+    drawMap(sid, lay);
   }
 
   var frames = model.frames[sid];
@@ -1046,9 +1111,10 @@ function updateMap() {
     var r = liveHere || wasById[id] || first[id];
     if (liveHere && !r.blocked) totalBytes += r.size;
 
-    var top = lay.pos[r.start] || 0;
-    var bottom = lay.pos[r.end];
-    var h = Math.max(6, (bottom === undefined ? top : bottom) - top);
+    var run = lay.runs[lay.where[r.start]];
+    var top = run ? run.pos[r.start] : 0;
+    var bottom = run ? run.pos[r.end] : undefined;
+    var h = Math.max(MIN_SLOT, (bottom === undefined ? top : bottom) - top);
     node.slot.style.top = top + 'px';
     node.slot.style.height = h + 'px';
 
@@ -1059,7 +1125,8 @@ function updateMap() {
     var radius = h < 15 ? 5 : 11;
     var above = joinAbove[id] ? 0 : radius, below = joinBelow[id] ? 0 : radius;
     node.box.className = 'box ' + (r.blocked ? 'none' : r.bucket) +
-      (joinAbove[id] ? ' joined-above' : '') + (h < 15 ? ' squat' : '');
+      (!r.blocked && r.perms[2] === 'x' ? ' exec' : '') +
+      (joinAbove[id] ? ' joined-above' : '');
     node.box.style.borderRadius = above + 'px ' + above + 'px ' +
       below + 'px ' + below + 'px';
     node.box.style.fontSize = (h < 19 ? 10 : 11.5) + 'px';
@@ -1073,8 +1140,7 @@ function updateMap() {
       node.perms.textContent = r.perms;
       node.perms.className = 'box-perms' + (r.perms[1] === 'w' ? ' writable' : '');
       node.size.textContent = fmtSize(r.size);
-      node.hatch.className = 'hatch' +
-        (r.blocked ? ' blocked' : r.perms[2] === 'x' ? ' exec' : '');
+      node.box.title = r.label + '  ' + r.perms + '  ' + fmtSize(r.size);
     }
   });
 
@@ -1358,7 +1424,6 @@ function syncSpace() {
     state.space = ev.space;
     state.pick = null;
     state.hover = null;
-    buildSlots();
   }
 }
 
@@ -1428,9 +1493,13 @@ function buildSpeeds() {
 // Wiring.
 // --------------------------------------------------------------------------
 
+/* The map is exactly as tall as the panel it sits in -- 32px is the panel's
+   own padding -- so the whole address space is on screen and the transport
+   stays put.  Nothing is clamped to a comfortable minimum: a short window
+   gets a short map. */
 function measure() {
   var box = $('map-scroll');
-  var h = Math.max(380, Math.round(box.clientHeight) - 32);
+  var h = Math.max(120, Math.round(box.clientHeight) - 32);
   if (Math.abs(h - state.height) <= 2) return false;
   state.height = h;
   return true;
@@ -1452,7 +1521,10 @@ function start() {
     setPlaying(!state.playing);
   });
 
+  var axis = param('axis');
+  if (axis && /^(collapsed|log|linear)$/.test(axis)) state.axis = axis;
   Array.prototype.forEach.call($('axis-seg').children, function (button) {
+    button.classList.toggle('on', button.dataset.mode === state.axis);
     button.addEventListener('click', function () {
       state.axis = button.dataset.mode;
       Array.prototype.forEach.call($('axis-seg').children, function (b) {

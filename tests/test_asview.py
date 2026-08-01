@@ -595,8 +595,16 @@ class Elf(unittest.TestCase):
         self.assertEqual(library.annotate(desc, [desc]), {})
 
 
+# The programs recorded below are named by absolute path on purpose: what is
+# being tested is a recording of a real image the kernel mapped, so which
+# echo it is matters.  A build sandbox has none of them, hence the guard.
+NEEDED = ["/bin/sh", "/bin/echo", "/bin/cat"]
+
+
 @unittest.skipUnless(shutil.which("strace"), "strace is not installed")
 @unittest.skipUnless(os.path.exists("/proc/self/maps"), "/proc is not mounted")
+@unittest.skipUnless(all(map(os.path.exists, NEEDED)),
+                     f"needs {', '.join(NEEDED)}")
 class EndToEnd(unittest.TestCase):
     """Record a real program and let the checkpoints do the judging."""
 

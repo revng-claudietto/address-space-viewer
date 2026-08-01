@@ -73,6 +73,8 @@ runs at the speed the program really had.
 as-trace record [options] -- COMMAND [ARG...]   run a program, write the JSON
 as-trace parse LOG [options]                    convert an existing strace log
 as-trace summary run.json [--regions]           print a timeline as text
+as-trace view run.json [--axis MODE]            serve the viewer and open it
+as-trace shot run.json -o out.png [--event N]   draw one step, headless
 ```
 
 `parse` reads a log made with `strace -f -ttt -y`; it has no snapshot, so the
@@ -90,38 +92,54 @@ disagreement lands in `checks`.
 | `--strace-log FILE` | keep strace's raw output as well |
 | `--shell PATH` / `--strace PATH` | which shell to use as trampoline, which strace |
 | `--indent N` | `0` for one line |
+| `--port N` / `--no-open` | for `view`: which port, and whether to open a browser |
+| `--event N` / `--size WxH` | for `shot`: which step to draw, and how large |
 
 
 ## The viewer
 
 `viewer/index.html` plays a recording back.  Open it in a browser and drop a
 `run.json` onto it; there is nothing to build, nothing to install, and it
-works straight off the filesystem.  Served over HTTP it also takes
-`?trace=run.json`, and `&autoplay`.
+works straight off the filesystem.
 
 ```console
 $ ./as-trace record -o run.json -- /bin/ls
-$ xdg-open viewer/index.html          # then drop run.json on the page
+$ ./as-trace view run.json            # serves it and opens a browser
+$ xdg-open viewer/index.html          # or open it and drop run.json on the page
 ```
 
-The map on the left is the address space, low addresses at top.  Every
-address a region ever occupied keeps its place for the whole recording, so a
-mapping never shifts sideways to make room for one that appears later: what
-moves is what the program moved.  The unmapped stretches between them are
-collapsed to a fixed height and labelled with what they span -- the 24 TiB
-between the heap and the libraries is real, and drawing it to scale would
-leave nothing else on screen.  `LOG` and `LINEAR` give the axis back some or
-all of its true proportions.
+`view` exists only because a browser will not `fetch` a `file://` URL; it
+serves the three files and the JSON and nothing else.  Served over HTTP the
+page also takes `?trace=`, `&axis=` and `&autoplay` directly.
+
+The map is the address space, low addresses at top, and it owns the full
+height of the window: everything else is in the column beside it, so nothing
+is stacked above or below the one panel whose whole point is vertical
+extent.  Every address a region ever occupied keeps its place for the whole
+recording, so a mapping never shifts sideways to make room for one that
+appears later: what moves is what the program moved.  The unmapped stretches
+between them are collapsed to a fixed height and labelled with what they
+span -- the 24 TiB between the heap and the libraries is real, and drawing
+it to scale would leave nothing else on screen.  `LOG` and `LINEAR` give the
+axis back some or all of its true proportions.
+
+Two scales come out of the map being exactly one window tall.  The outer one
+hands that height to each contiguous block of mapped memory by size, and it
+is what the eye reads.  The inner one gives every mapping inside a block a
+readable line whatever its size -- so when a block holds more mappings than
+its share of the window has room for, the block scrolls, marked `⇕ n` on its
+rail.  Nothing is dropped to make things fit, and looking inside one block
+moves nothing outside it.
 
 Blue is file-backed, brown anonymous, orange the kernel's own pages; a
 hatched box is executable, a dashed one has no access at all.  A file-backed
 region is named after the ELF section that fills most of it, which is what
 the `bias` in the JSON is for, and hovering one lists the rest.
 
-The middle panel is the syscall that produced the step, the regions it
-changed, and the mapping under the pointer.  The right panel is the whole
-trace; the strip along the bottom is the same thing as a scrub bar.  Arrow
-keys step, space plays, `Home` and `End` jump to the ends.
+Beside the map: the syscall that produced the step, the regions it changed,
+and the mapping under the pointer; then the whole trace; then the transport,
+whose tick strip is the same thing as a scrub bar.  Arrow keys step, space
+plays, `Home` and `End` jump to the ends.
 
 A trace with more than one address space gets a row of chips above the map.
 `FOLLOW` keeps the map on whichever space the current event acts on, which is
@@ -294,6 +312,19 @@ ends, which is how the viewer knows to follow a `fork` into its child.
 read at an exec, `inherited` for a copy made by fork, `none` when neither was
 available -- in which case its regions begin at whatever the syscalls map next,
 and `warnings` says so.
+
+
+## Nix
+
+```console
+$ nix run github:…/address-space-viewer -- record -o run.json -- /bin/ls
+$ nix develop            # python, pyelftools, strace, playwright and a browser
+$ nix flake check        # the test suite
+```
+
+The package is the command and the viewer together; `strace` comes with it.
+`nix develop` adds what only `as-trace shot` needs -- playwright and a
+chromium -- which the tool finds through `PLAYWRIGHT_BROWSERS_PATH`.
 
 
 ## Tests

@@ -1,8 +1,10 @@
-"""The command line: one entry point, three subcommands.
+"""The command line: one entry point, five subcommands.
 
   record   run a program under strace and write the timeline as JSON
   parse    turn an strace log that already exists into the same JSON
   summary  print a JSON timeline as text, to read without a browser
+  view     serve the viewer with a timeline loaded, and open it
+  shot     render the viewer on a timeline and write a PNG
 """
 
 from __future__ import annotations
@@ -12,9 +14,11 @@ import json
 import os
 import sys
 import time
+import webbrowser
+from pathlib import Path
 from typing import Sequence
 
-from . import __version__, elfinfo, record, replay, space, straceout
+from . import __version__, elfinfo, record, replay, space, straceout, web
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -87,6 +91,34 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--regions", action="store_true",
                    help="also print the final layout of every address space")
     p.set_defaults(handler=_summary)
+
+    page = argparse.ArgumentParser(add_help=False)
+    page.add_argument("--axis", choices=("collapsed", "log", "linear"),
+                      default="collapsed",
+                      help="how the address axis is scaled (default: collapsed)")
+
+    p = subs.add_parser("view", parents=[page],
+                        help="serve the viewer and open it in a browser")
+    p.add_argument("json", nargs="?", help="a file from record")
+    p.add_argument("--port", type=int, default=0, metavar="N",
+                   help="port to serve on (default: any free one)")
+    p.add_argument("--host", default="127.0.0.1", metavar="ADDR")
+    p.add_argument("--autoplay", action="store_true",
+                   help="start stepping through as soon as it loads")
+    p.add_argument("--no-open", dest="open", action="store_false",
+                   help="print the URL instead of opening a browser")
+    p.set_defaults(handler=_view)
+
+    p = subs.add_parser("shot", parents=[page],
+                        help="render the viewer headless and write a PNG")
+    p.add_argument("json", help="a file from record")
+    p.add_argument("-o", "--output", default="shot.png", metavar="FILE")
+    p.add_argument("--event", type=int, default=0, metavar="N",
+                   help="which step to draw (default: 0)")
+    p.add_argument("--size", default="1600x900", metavar="WxH")
+    p.add_argument("--browser", metavar="PATH",
+                   help="the browser binary, when playwright cannot find one")
+    p.set_defaults(handler=_shot)
 
     return parser
 
@@ -203,6 +235,80 @@ def _summary(args: argparse.Namespace) -> int:
             for r in sp["final_regions"]:
                 print(f"  {r['start']}-{r['end']} {r['prot']}"
                       f"{'s' if r['shared'] else 'p'} {r.get('path') or r.get('name') or ''}")
+    return 0
+
+
+def _view(args: argparse.Namespace) -> int:
+    problem = web.check_viewer()
+    if problem:
+        print(f"as-trace: {problem}", file=sys.stderr)
+        return 1
+
+    trace = None
+    if args.json:
+        trace = Path(args.json)
+        problem = web.check_trace(trace)
+        if problem:
+            print(f"as-trace: {problem}", file=sys.stderr)
+            return 1
+
+    query: dict = {}
+    if trace is not None:
+        query["trace"] = web.TRACE_URL.lstrip("/")
+    if args.axis != "collapsed":
+        query["axis"] = args.axis
+    if args.autoplay:
+        query["autoplay"] = None
+
+    try:
+        serving = web.Serving(trace, host=args.host, port=args.port)
+    except OSError as e:
+        print(f"as-trace: cannot listen on {args.host}:{args.port}: "
+              f"{e.strerror}", file=sys.stderr)
+        return 1
+
+    with serving:
+        url = serving.url(**query)
+        print(url, flush=True)      # the caller may be waiting to read it
+        if trace is None:
+            print("as-trace: no trace given; drop one on the page",
+                  file=sys.stderr)
+        if args.open and not webbrowser.open(url):
+            print("as-trace: no browser to open; the URL is above",
+                  file=sys.stderr)
+        print("as-trace: serving; Ctrl-C to stop", file=sys.stderr)
+        try:
+            while True:
+                time.sleep(3600)
+        except KeyboardInterrupt:
+            print(file=sys.stderr)
+    return 0
+
+
+def _shot(args: argparse.Namespace) -> int:
+    problem = web.check_viewer() or web.check_trace(Path(args.json))
+    if problem:
+        print(f"as-trace: {problem}", file=sys.stderr)
+        return 1
+    try:
+        width, _, height = args.size.partition("x")
+        size = (int(width), int(height))
+    except ValueError:
+        print(f"as-trace: --size wants WxH, not {args.size}", file=sys.stderr)
+        return 2
+
+    try:
+        web.screenshot(Path(args.json), Path(args.output), event=args.event,
+                       axis=args.axis, size=size,
+                       browser=args.browser or os.environ.get("AS_TRACE_BROWSER"))
+    except ImportError:
+        print("as-trace: shot needs playwright and a browser; "
+              "`nix run .#dev` has both", file=sys.stderr)
+        return 1
+    except Exception as e:                       # playwright raises its own
+        print(f"as-trace: {e}", file=sys.stderr)
+        return 1
+    print(f"as-trace: wrote {args.output}", file=sys.stderr)
     return 0
 
 
