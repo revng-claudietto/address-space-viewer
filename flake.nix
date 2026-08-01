@@ -24,15 +24,19 @@
         default = as-trace;
       });
 
-      # `nix develop` adds what only the viewer's own checking needs: a
-      # browser, and the bindings to drive it.  `as-trace shot` finds them
-      # through PLAYWRIGHT_BROWSERS_PATH.
+      # `nix develop` adds what the recorder does not need but the rest of
+      # the work does: the other backend, a browser, and the bindings to
+      # drive it.  `as-trace shot` finds the browser through
+      # PLAYWRIGHT_BROWSERS_PATH.
       devShells = forEach (system: pkgs: {
         default = pkgs.mkShell {
           packages = [
-            (pkgs.python3.withPackages (ps: [ ps.pyelftools ps.playwright ]))
+            (pkgs.python3.withPackages (ps: [
+              ps.pyelftools ps.playwright ps.libdebug
+            ]))
             pkgs.strace
             pkgs.playwright-driver.browsers
+            pkgs.ffmpeg
           ];
           env = {
             PLAYWRIGHT_BROWSERS_PATH = "${pkgs.playwright-driver.browsers}";

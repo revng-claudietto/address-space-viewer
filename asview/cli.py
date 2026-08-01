@@ -1,6 +1,6 @@
 """The command line: one entry point, five subcommands.
 
-  record   run a program under strace and write the timeline as JSON
+  record   run a program under strace or libdebug, write the timeline as JSON
   parse    turn an strace log that already exists into the same JSON
   summary  print a JSON timeline as text, to read without a browser
   view     serve the viewer with a timeline loaded, and open it
@@ -18,7 +18,10 @@ import webbrowser
 from pathlib import Path
 from typing import Sequence
 
-from . import __version__, elfinfo, record, replay, space, straceout, web
+from . import __version__, elfinfo, libdebug_record, record, replay, space
+from . import straceout, web
+
+BACKENDS = {"strace": record, "libdebug": libdebug_record}
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -56,21 +59,27 @@ def _parser() -> argparse.ArgumentParser:
                              "which are present in the file but never mapped")
 
     tracing = argparse.ArgumentParser(add_help=False)
+    tracing.add_argument("--backend", choices=sorted(BACKENDS), default="strace",
+                         help="how to watch the program: strace, or libdebug "
+                              "driving ptrace itself (default: strace)")
     tracing.add_argument("--no-baseline", dest="baseline", action="store_false",
                          help="do not pause the program after exec to read "
                               "/proc/pid/maps; the timeline then starts from "
                               "an empty address space, showing only what the "
                               "syscalls say")
     tracing.add_argument("--delay-ms", type=int, default=120, metavar="N",
-                         help="how long to hold the tracee at each stop")
+                         help="strace backend: how long to hold the tracee at "
+                              "each stop")
     tracing.add_argument("--strace", default="strace", metavar="PATH",
-                         help="the strace binary to use")
+                         help="strace backend: the strace binary to use")
     tracing.add_argument("--shell", default="/bin/sh", metavar="PATH",
-                         help="the shell used as the exec trampoline")
+                         help="strace backend: the shell used as the exec "
+                              "trampoline")
     tracing.add_argument("--strace-log", metavar="FILE",
-                         help="also keep strace's raw output here")
+                         help="strace backend: also keep strace's raw output here")
     tracing.add_argument("--strace-option", action="append", default=[],
-                         metavar="OPT", help="pass another option to strace")
+                         metavar="OPT",
+                         help="strace backend: pass another option to strace")
 
     p = subs.add_parser("record", parents=[common, tracing],
                         help="run a program and record its address space")
@@ -142,22 +151,42 @@ def _trace(args: argparse.Namespace) -> tuple[int, dict | None]:
         print("as-trace: nothing to run", file=sys.stderr)
         return 2, None
 
-    version = record.strace_version(args.strace)
-    if version is None:
-        print(f"as-trace: cannot run {args.strace}", file=sys.stderr)
-        return 1, None
+    backend = BACKENDS[args.backend]
+    if args.backend == "strace":
+        version = backend.strace_version(args.strace)
+        if version is None:
+            print(f"as-trace: cannot run {args.strace}", file=sys.stderr)
+            return 1, None
+        options = backend.Options(
+            baseline=args.baseline, delay_ms=args.delay_ms, strace=args.strace,
+            shell=args.shell, keep_log=args.strace_log,
+            extra_strace=tuple(args.strace_option))
+    else:
+        version = backend.backend_version()
+        if version is None:
+            print("as-trace: libdebug is not installed; `pip install "
+                  "libdebug`, or use --backend strace", file=sys.stderr)
+            return 1, None
+        options = backend.Options(baseline=args.baseline)
 
     space.set_page_size(args.page_size)
-    options = record.Options(
-        baseline=args.baseline, delay_ms=args.delay_ms, strace=args.strace,
-        shell=args.shell, keep_log=args.strace_log,
-        extra_strace=tuple(args.strace_option))
-
     started = time.time()
-    run = record.run(command, options)
+    try:
+        run = backend.run(command, options)
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(f"as-trace: {exc}", file=sys.stderr)
+        return 1, None
     elapsed = time.time() - started
 
-    doc = _document(args, run.log, run.snapshots, run.trampoline, extra={
+    generator = {"tool": "as-trace", "version": __version__,
+                 "backend": args.backend, args.backend: version}
+    if args.backend == "strace":
+        generator["command"] = run.strace_argv
+
+    doc = _document(args, getattr(run, "log", None), run.snapshots,
+                    trampoline=getattr(run, "trampoline", False),
+                    records=getattr(run, "records", None),
+                    extra={
         "target": {
             "argv": command,
             "cwd": os.getcwd(),
@@ -165,11 +194,10 @@ def _trace(args: argparse.Namespace) -> tuple[int, dict | None]:
             "traced_at": started,
             "wall_seconds": round(elapsed, 3),
         },
-        "generator": {"tool": "as-trace", "version": __version__,
-                      "strace": version, "command": run.strace_argv},
+        "generator": generator,
     })
     doc["warnings"] = run.warnings + doc["warnings"]
-    if not args.strace_log:
+    if args.backend == "strace" and not args.strace_log:
         os.unlink(run.log)
     return 0, doc
 
@@ -316,15 +344,23 @@ def _shot(args: argparse.Namespace) -> int:
 # Shared.
 # --------------------------------------------------------------------------- #
 
-def _document(args: argparse.Namespace, log: str, snapshots: list[replay.Snapshot],
-              trampoline: bool, extra: dict, text: str | None = None) -> dict:
-    if text is None:
-        with open(log, errors="replace") as fp:
-            text = fp.read()
-    records = straceout.Parser().feed(text)
+def _document(args: argparse.Namespace, log: str | None,
+              snapshots: list[replay.Snapshot], trampoline: bool, extra: dict,
+              text: str | None = None,
+              records: list[straceout.Record] | None = None) -> dict:
+    # The strace backend hands over a log to parse; libdebug hands over the
+    # records themselves, having done its own decoding.  Everything past this
+    # point is the same either way, which is the point of the split.
+    if records is None:
+        if text is None:
+            with open(log, errors="replace") as fp:
+                text = fp.read()
+        records = straceout.Parser().feed(text)
+    stall = getattr(args, "delay_ms", 0) / 1000 \
+        if getattr(args, "backend", "strace") == "strace" else 0
     elves = elfinfo.Library(enabled=args.elf, all_sections=args.all_sections)
     machine = replay.Machine(merging=args.merge, trampoline=trampoline, elves=elves,
-                             injected_delay=getattr(args, "delay_ms", 0) / 1000)
+                             injected_delay=stall)
     machine.run(records, snapshots)
     doc = machine.document(extra)
     if args.elf and not elfinfo.HAVE_PYELFTOOLS:

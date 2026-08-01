@@ -22,8 +22,9 @@ $ ./as-trace summary run.json
     ...
 ```
 
-Requirements: Python 3.10+, `strace` 5.2 or newer, and `/proc`.  `pyelftools`
-is optional and adds the segments and sections of every mapped ELF.
+Requirements: Python 3.10+, `/proc`, and one of the two backends below --
+`strace` 5.2 or newer, or `libdebug`.  `pyelftools` is optional and adds the
+segments and sections of every mapped ELF.
 
 
 ## The one thing a syscall trace cannot tell you
@@ -67,6 +68,39 @@ The pause is taken back out of the timeline (see `t` below), so an animation
 runs at the speed the program really had.
 
 
+## Two backends
+
+`--backend strace` (the default) and `--backend libdebug` collect the same
+recording by different means.  Everything after collection -- the model, the
+replay, the JSON, the viewer -- is shared, so the choice is only about how
+the syscalls and the exec baseline are caught.
+
+|  | `strace` | `libdebug` |
+|---|---|---|
+| exec baseline | injected delay, then a watcher | a ptrace stop, read directly |
+| cost to the target | 120 ms per exec, taken back out of `t` | none |
+| syscall decoding | strace's, mature and complete | this repo's, in `libdebug_record.py` |
+| following forks and threads | `strace -f` | one debugger per child |
+| needs | the `strace` binary | a compiled extension, x86-64/aarch64/i386 |
+
+libdebug has the better baseline: it stops the target after its own exec and
+calls back at the exit of later ones, so reading `/proc/<pid>/maps` there is
+a direct read rather than a race, and none of the trampoline, the injected
+delay, the auxv watch or the timeline correction above is needed.  It is the
+weaker syscall reader: libdebug hands over six registers and a return value,
+and the adapter has to recover strings and argv from the target's memory,
+resolve descriptors, name flags and synthesise the exit records that strace
+prints for free.
+
+Both are run against the same end-to-end tests, including the one that
+compares a replayed state against what the kernel itself printed.
+
+```console
+$ pip install -r requirements-libdebug.txt
+$ ./as-trace record --backend libdebug -o run.json -- ./myprogram
+```
+
+
 ## Commands
 
 ```
@@ -85,8 +119,9 @@ disagreement lands in `checks`.
 
 | | |
 |---|---|
-| `--no-baseline` | do not pause after exec; start from an empty address space |
-| `--delay-ms N` | how long the pause holds the tracee (default 120) |
+| `--backend strace`/`libdebug` | how the program is watched (default: `strace`) |
+| `--no-baseline` | do not read the maps after exec; start from an empty address space |
+| `--delay-ms N` | strace backend: how long the pause holds the tracee (default 120) |
 | `--no-merge` | keep every mapping separate instead of coalescing neighbours |
 | `--no-elf` / `--all-sections` | ELF inspection off, or include unmapped sections |
 | `--strace-log FILE` | keep strace's raw output as well |

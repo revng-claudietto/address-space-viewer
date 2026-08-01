@@ -14,6 +14,7 @@ recording is a comparison against the kernel, not against our expectations.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import shutil
@@ -601,22 +602,40 @@ class Elf(unittest.TestCase):
 NEEDED = ["/bin/sh", "/bin/echo", "/bin/cat"]
 
 
-@unittest.skipUnless(shutil.which("strace"), "strace is not installed")
 @unittest.skipUnless(os.path.exists("/proc/self/maps"), "/proc is not mounted")
 @unittest.skipUnless(all(map(os.path.exists, NEEDED)),
                      f"needs {', '.join(NEEDED)}")
 class EndToEnd(unittest.TestCase):
-    """Record a real program and let the checkpoints do the judging."""
+    """Record a real program and let the kernel do the judging.
+
+    Every test here is run against both recorders.  They share the model,
+    the replay and the output, so what differs is only how the syscalls and
+    the exec baseline were collected -- which is exactly what a second
+    backend has to get right for the rest to mean anything.
+    """
+
+    BACKEND = "strace"
+
+    @classmethod
+    def setUpClass(cls):
+        if cls.BACKEND == "strace" and not shutil.which("strace"):
+            raise unittest.SkipTest("strace is not installed")
+        if cls.BACKEND == "libdebug" and not importlib.util.find_spec("libdebug"):
+            raise unittest.SkipTest("libdebug is not installed")
 
     def record(self, *args: str, command: str = "record") -> dict:
         # Not to stdout: the traced program writes there too.
         with tempfile.NamedTemporaryFile(suffix=".json") as out:
             done = subprocess.run(
-                [sys.executable, AS_TRACE, command, "-o", out.name, *args],
+                [sys.executable, AS_TRACE, command, "-o", out.name,
+                 *self.flags(command), *args],
                 capture_output=True, text=True)
             self.assertEqual(done.returncode, 0, done.stderr)
             with open(out.name) as written:
                 return json.load(written)
+
+    def flags(self, command: str) -> list[str]:
+        return ["--backend", self.BACKEND] if command == "record" else []
 
     def test_echo(self):
         doc = self.record("--", "/bin/echo", "hello")
@@ -636,7 +655,7 @@ class EndToEnd(unittest.TestCase):
         with tempfile.NamedTemporaryFile(suffix=".json") as out:
             printed = subprocess.run(
                 [sys.executable, AS_TRACE, "record", "-o", out.name,
-                 "--", "/bin/cat", "/proc/self/maps"],
+                 *self.flags("record"), "--", "/bin/cat", "/proc/self/maps"],
                 capture_output=True, text=True)
             self.assertEqual(printed.returncode, 0, printed.stderr)
             with open(out.name) as fp:
@@ -651,7 +670,8 @@ class EndToEnd(unittest.TestCase):
                 return
         self.fail("no point in the timeline matches the maps the program printed")
 
-    def test_the_trampoline_is_not_in_the_output(self):
+    def test_the_way_in_is_not_in_the_output(self):
+        """Neither the strace trampoline nor libdebug's bootstrap shows."""
         doc = self.record("--", "/bin/echo", "hello")
         self.assertNotIn("/bin/sh", [p["exe"] for p in doc["processes"]])
         self.assertEqual(doc["events"][0]["args"]["path"], "/bin/echo")
@@ -669,6 +689,12 @@ class EndToEnd(unittest.TestCase):
     def test_the_exit_code_is_reported(self):
         doc = self.record("--", "/bin/sh", "-c", "exit 3")
         self.assertEqual(doc["target"]["exit_code"], 3)
+
+
+class EndToEndWithLibdebug(EndToEnd):
+    """The same recordings, collected by libdebug driving ptrace itself."""
+
+    BACKEND = "libdebug"
 
 
 if __name__ == "__main__":
