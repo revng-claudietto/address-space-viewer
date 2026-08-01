@@ -147,6 +147,11 @@ def _parser() -> argparse.ArgumentParser:
                    help="the step to stop at (default: the last)")
     p.add_argument("--fps", type=int, default=8, metavar="N",
                    help="frames a second to photograph and play (default: 8)")
+    p.add_argument("--zoom", type=float, default=1.0, metavar="F",
+                   help="draw the page at this scale, so --size 1280x720 "
+                        "--zoom 0.625 is a 1280-wide layout on 800x450 "
+                        "pixels; the page is drawn that size rather than "
+                        "drawn large and shrunk (default: 1)")
     p.add_argument("--keep-frames", metavar="DIR",
                    help="also leave the frames here, as PNG")
     p.add_argument("--browser", metavar="PATH",
@@ -372,7 +377,7 @@ def _film(args: argparse.Namespace) -> int:
     try:
         web.film(Path(args.json), Path(args.output), size=size,
                  ms_per_step=args.ms, hold_ms=args.hold, axis=args.axis,
-                 first=args.first, last=args.last, fps=args.fps,
+                 first=args.first, last=args.last, fps=args.fps, zoom=args.zoom,
                  keep_frames=Path(args.keep_frames) if args.keep_frames else None,
                  browser=args.browser or os.environ.get("AS_TRACE_BROWSER"))
     except ImportError:

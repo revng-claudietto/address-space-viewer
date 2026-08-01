@@ -63,10 +63,18 @@ start = next((e['seq'] for e in events
               and (e.get('args') or {}).get('prot') == 'PROT_NONE'), 1)
 print(max(0, start - 1))")
 
+	# 800 pixels wide, because that is under the width of the column a
+	# README is rendered in and so is shown at its own size -- an image
+	# wider than the column is resampled by the browser, which is the one
+	# scaling step that no encoder setting can undo.  The page is drawn at
+	# 800 rather than drawn at 1280 and shrunk: the viewer will not lay out
+	# below 1280, so the layout stays 1280 and the browser rasterises it
+	# onto 800 pixels, glyphs and all.
 	fps=${LOOP_FPS:-6}
 	echo "photographing steps $from to $((from + 15)) again, for the README"
 	"$here/as-trace" film "$out/demo.json" -o "$scratch/short.mp4" \
-		--size 1280x720 --ms "${LOOP_MS:-420}" --hold 900 --fps "$fps" \
+		--size 1280x720 --zoom "${LOOP_ZOOM:-0.625}" \
+		--ms "${LOOP_MS:-420}" --hold 900 --fps "$fps" \
 		--from "$from" --to "$((from + 15))" --keep-frames "$scratch/frames"
 	img2webp -loop 0 -d $((1000 / fps)) -lossless -m 6 -min_size \
 		"$scratch"/frames/*.png -o "$out/address-space.webp"

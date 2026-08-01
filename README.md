@@ -18,7 +18,9 @@ it from every push and attaches the full-size recording to a release:
 which you can drop on the viewer yourself.  The animation above is the
 fifteen steps in the middle of it, where the program is working on its own
 memory rather than being loaded; a README will not play a video, since
-GitHub keeps `<video>` only for files uploaded to GitHub itself.
+GitHub keeps `<video>` only for files uploaded to GitHub itself.  It is 800
+pixels wide because that is the width it is shown at, and every pixel of it
+is the one the browser drew.
 
 
 ## Getting started

@@ -114,7 +114,7 @@ def bundled_browser() -> str | None:
 def frames(trace: Path, into: Path, size: tuple[int, int] = (1600, 900),
            ms_per_step: int = 700, hold_ms: int = 1500, axis: str = "collapsed",
            browser: str | None = None, first: int = 0, last: int | None = None,
-           fps: int = 8) -> list[tuple[Path, float]]:
+           fps: int = 8, zoom: float = 1.0) -> list[tuple[Path, float]]:
     """Step through a recording, photographing the page as it goes.
 
     Not the browser's own video recorder: that writes VP8 at a bitrate meant
@@ -127,6 +127,12 @@ def frames(trace: Path, into: Path, size: tuple[int, int] = (1600, 900),
     the wall time it stood for rather than with an assumed one; the caller
     resamples.  Motion inside a step is what the interval buys: a mapping
     that grows takes a little over half a second, and is worth several.
+
+    `zoom` is the browser's device scale factor, so `size` stays the layout
+    the page is given -- the viewer asks for 1280 and will not go below it --
+    while the pixels come out at `size * zoom`.  The page is drawn at that
+    size rather than drawn large and shrunk, so nothing is resampled: the
+    glyphs are rasterised at the size they are shown at.
     """
     from playwright.sync_api import sync_playwright
 
@@ -137,7 +143,8 @@ def frames(trace: Path, into: Path, size: tuple[int, int] = (1600, 900),
     with Serving(trace) as serving, sync_playwright() as play:
         chromium = play.chromium.launch(executable_path=browser or bundled_browser())
         try:
-            page = chromium.new_page(viewport={"width": size[0], "height": size[1]})
+            page = chromium.new_page(viewport={"width": size[0], "height": size[1]},
+                                     device_scale_factor=zoom)
             problems: list[str] = []
             page.on("pageerror", lambda e: problems.append(str(e)))
             # Opening on the first step of a segment rather than stepping to
@@ -186,7 +193,8 @@ def frames(trace: Path, into: Path, size: tuple[int, int] = (1600, 900),
 def film(trace: Path, out: Path, size: tuple[int, int] = (1600, 900),
          ms_per_step: int = 700, hold_ms: int = 1500, axis: str = "collapsed",
          browser: str | None = None, first: int = 0, last: int | None = None,
-         fps: int = 8, keep_frames: Path | None = None) -> None:
+         fps: int = 8, zoom: float = 1.0,
+         keep_frames: Path | None = None) -> None:
     """Photograph a recording being stepped through, and encode it."""
     import shutil
     import subprocess
@@ -199,7 +207,7 @@ def film(trace: Path, out: Path, size: tuple[int, int] = (1600, 900),
         into = Path(keep_frames) if keep_frames else Path(scratch) / "frames"
         shot = frames(trace, into, size=size, ms_per_step=ms_per_step,
                       hold_ms=hold_ms, axis=axis, browser=browser,
-                      first=first, last=last, fps=fps)
+                      first=first, last=last, fps=fps, zoom=zoom)
 
         # A concat list rather than a frame rate, so the timings the capture
         # actually achieved are the ones the video plays at.
