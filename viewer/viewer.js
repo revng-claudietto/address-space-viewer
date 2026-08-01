@@ -179,9 +179,10 @@ function sectionsIn(raw, objects) {
 }
 
 /* What a mapping holds, named without the file it comes from -- the block it
-   sits in is named after that.  A mapping is a range of pages rather than a
-   section, and usually holds several, so it is named after whichever fills
-   most of it and says how many others came with it.
+   sits in is named after that.  A mapping usually holds several sections
+   and is named after whichever fills most of it; the rest are in the detail
+   panel, under `holds`, rather than in a count on the box that reads like
+   an offset.
 
    The ELF header and the program headers sit at the object's base address
    and are in no section, so a range holding that address and mostly not
@@ -197,9 +198,9 @@ function whatIsIn(r) {
     if (s.overlap > best) { best = s.overlap; top = s.name; }
   });
   if (r.holdsBase && r.sections.length && r.size - accounted > best) {
-    return 'ELF headers +' + r.sections.length;
+    return 'ELF headers';
   }
-  if (top) return top + (r.sections.length > 1 ? ' +' + (r.sections.length - 1) : '');
+  if (top) return top;
   if (r.holdsBase && r.path) return 'ELF headers';
   if (r.zero_fill) return '.bss';
   if (r.path) return basename(r.path);
