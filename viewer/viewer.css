@@ -9,7 +9,11 @@
    whole point is vertical extent. */
 
 :root {
-  --gutter: 116px;          /* run labels and addresses live to the left of it */
+  /* The rail to the left of the map: an address at each end of a block and
+     the name of what backs it in the middle.  Wide enough for the longest
+     of those names to be read -- ld-linux-x86-64.so.2 is 136 pixels of
+     text, and a name that has to be guessed at is not doing its job. */
+  --gutter: 164px;
   --log-row: 25px;
   --side: 636px;            /* the column holding everything but the map */
 
@@ -293,6 +297,9 @@ button { font-family: inherit; }
 
 .run { position: absolute; left: 0; width: calc(var(--gutter) - 14px); z-index: 3; }
 .run.empty .run-title { opacity: 0.35; }
+/* The two ends of the address space: an address, and no rail to hang it on. */
+.run.edge .addr.top { top: 0; }
+.run.edge .addr.bottom { bottom: auto; top: -11px; }
 .run .rail {
   position: absolute;
   right: 0;
@@ -792,7 +799,7 @@ button { font-family: inherit; }
    it was drawn to be read at, which is the whole point of laying out for
    the window rather than laying out wide and shrinking. */
 @media (max-width: 1120px) {
-  :root { --side: 340px; --gutter: 96px; }
+  :root { --side: 340px; --gutter: 164px; }
 
   .app { min-width: 0; }
 

@@ -66,6 +66,8 @@ var MS_PER_STEP = 900;
 var MAX_CHANGES = 24;      // a fork copies the lot; the list is not the point
 var MAX_TICKS = 320;       // as many ticks as the scrub bar can show apart
 var GAP_FLOOR = 11;        // px an unmapped stretch keeps: enough to label it
+var FLOOR = '0x0';         // the bottom of the address space
+var CEILING = '0x10000000000000000';        // and one past the top of it
 var ROW = 21;              // px every mapping gets, so every one can be read
 var MIN_SLOT = 3;          // px, the floor a mapping can never go below
 
@@ -428,6 +430,11 @@ function computeLayout(model, sid, mode, H) {
   var inst = model.extents[sid] || [];
   var bset = {}, i, k;
   for (i = 0; i < inst.length; i++) { bset[inst[i].start] = 1; bset[inst[i].end] = 1; }
+  // The address space is the whole address space, not the part of it that
+  // was used: what is below the lowest mapping and above the highest is
+  // unmapped rather than absent, and the map says so at both ends.
+  bset[FLOOR] = 1;
+  bset[CEILING] = 1;
   var bs = Object.keys(bset).sort(function (a, b) {
     var x = big(a), y = big(b);
     return x < y ? -1 : x > y ? 1 : 0;
@@ -981,6 +988,18 @@ function drawMap(sid, lay) {
   canvas.textContent = '';
   canvas.style.height = Math.round(lay.total) + 'px';
   slots = {};
+
+  var edge = function (text, top, where) {
+    var node = el('div', 'run edge');
+    node.style.top = top + 'px';
+    node.style.height = '1px';
+    node.appendChild(el('span', 'addr ' + where, text));
+    canvas.appendChild(node);
+  };
+  if (lay.total > 0) {
+    edge(shortAddr(FLOOR), 0, 'top');
+    edge('0xffffffffffffffff', Math.round(lay.total), 'bottom');
+  }
 
   lay.gaps.forEach(function (g) {
     var node = el('div', 'gap');
