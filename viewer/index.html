@@ -14,18 +14,6 @@
 <div class="app">
 
   <section class="panel map-panel">
-    <div class="panel-head">
-      <div id="space-chips" class="chips" hidden></div>
-      <span id="map-caption" class="caption">VIRTUAL ADDRESS SPACE &nbsp;&middot;&nbsp; LOW ADDRESSES AT TOP &nbsp;&middot;&nbsp; SPACE RESERVED FOR EVERY REGION EVER MAPPED</span>
-      <span class="head-right">
-        <span id="axis-seg" class="segmented">
-          <button type="button" data-mode="collapsed" class="on">COLLAPSED</button>
-          <button type="button" data-mode="log">LOG</button>
-          <button type="button" data-mode="linear">LINEAR</button>
-        </span>
-        <span id="map-counts" class="counts">0 MAPPINGS &nbsp;&middot;&nbsp; 0 B MAPPED</span>
-      </span>
-    </div>
     <div id="map-scroll" class="map-scroll">
       <div id="map-canvas" class="map-canvas"></div>
     </div>
@@ -53,6 +41,19 @@
       </div>
     </header>
 
+    <div class="panel-head map-bar">
+      <div id="space-chips" class="chips" hidden></div>
+      <span id="map-caption" class="caption">LOW ADDRESSES AT TOP</span>
+      <span class="head-right">
+        <span id="axis-seg" class="segmented">
+          <button type="button" data-mode="collapsed" class="on">COLLAPSED</button>
+          <button type="button" data-mode="log">LOG</button>
+          <button type="button" data-mode="linear">LINEAR</button>
+        </span>
+        <span id="map-counts" class="counts">0 MAPPINGS &nbsp;&middot;&nbsp; 0 B MAPPED</span>
+      </span>
+    </div>
+
     <div class="panes">
       <section class="panel event-panel">
         <div class="panel-head">
@@ -76,10 +77,11 @@
           <div id="detail-rows" class="rows"></div>
         </div>
         <div class="legend">
-          <span><i class="swatch file"></i>FILE-BACKED</span>
-          <span><i class="swatch anon"></i>ANONYMOUS</span>
-          <span><i class="swatch special"></i>KERNEL</span>
-          <span><i class="swatch none"></i>PROT_NONE</span>
+          <span><i class="swatch ro"></i>r--</span>
+          <span><i class="swatch rw"></i>rw-</span>
+          <span><i class="swatch rx"></i>r-x</span>
+          <span><i class="swatch rwx"></i>rwx</span>
+          <span><i class="swatch none"></i>---</span>
         </div>
       </section>
 

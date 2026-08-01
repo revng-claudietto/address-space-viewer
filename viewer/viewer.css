@@ -33,11 +33,16 @@
   --ember: oklch(0.70 0.19 34);
   --sand: oklch(0.86 0.13 82);
 
-  --file-fill: oklch(0.325 0.065 252);
-  --anon-fill: oklch(0.275 0.018 62);
-  --anon-edge: oklch(0.62 0.05 62);
-  --special-fill: oklch(0.435 0.105 56);
-  --special-edge: oklch(0.84 0.17 62);
+  /* A mapping is coloured by what may be done to its pages.  What backs it
+     is written on the rail of the block it belongs to instead. */
+  --ro-fill: oklch(0.305 0.055 252);
+  --ro-edge: oklch(0.74 0.15 252);
+  --rw-fill: oklch(0.330 0.060 78);
+  --rw-edge: oklch(0.86 0.13 82);
+  --rx-fill: oklch(0.330 0.075 305);
+  --rx-edge: oklch(0.80 0.16 305);
+  --rwx-fill: oklch(0.340 0.100 32);
+  --rwx-edge: oklch(0.70 0.19 34);
   --none-fill: oklch(0.225 0.012 250);
   --none-edge: oklch(0.55 0.03 250);
 }
@@ -70,6 +75,9 @@ button { font-family: inherit; }
   min-width: 1280px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) var(--side);
+  /* An implicit row is auto-sized, which lets a column taller than the
+     window push the window taller still. */
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .side {
@@ -262,6 +270,11 @@ button { font-family: inherit; }
 /* The map                                                                */
 /* --------------------------------------------------------------------- */
 
+/* In the map's bar the counts never give way -- the chips scroll instead,
+   since they have their own way of getting out of the way. */
+.map-bar { border-bottom: 1px solid var(--line); }
+.map-bar .head-right, .map-bar .counts { flex: none; min-width: auto; }
+
 .map-scroll {
   flex: 1;
   margin: 14px;
@@ -279,6 +292,7 @@ button { font-family: inherit; }
 /* A run of contiguous mapped address space: the label rail on the left. */
 
 .run { position: absolute; left: 0; width: calc(var(--gutter) - 14px); z-index: 3; }
+.run.empty .run-title { opacity: 0.35; }
 .run .rail {
   position: absolute;
   right: 0;
@@ -312,16 +326,6 @@ button { font-family: inherit; }
   max-width: calc(var(--gutter) - 26px);
   text-align: right;
 }
-.run .more {
-  position: absolute;
-  right: 8px;
-  top: 50%;
-  margin-top: 8px;
-  font-size: 9px;
-  color: var(--blue);
-  letter-spacing: 0.06em;
-  white-space: nowrap;
-}
 
 /* An unmapped gap. */
 
@@ -347,35 +351,8 @@ button { font-family: inherit; }
   padding: 0 8px;
 }
 
-/* One contiguous block of mapped memory.  The map as a whole is exactly the
-   height of the window, so a block gets its share of that and no more; when
-   the mappings inside it want more room than its share, the block scrolls.
-   Nothing is dropped, and nothing outside the block moves while you look
-   inside it. */
 
-.block {
-  position: absolute;
-  left: var(--gutter);
-  right: 0;
-  z-index: 2;
-  overflow-y: auto;
-  overflow-x: hidden;
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
-  scrollbar-color: #33404e transparent;
-}
-.block.scrolls {
-  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 18px), transparent);
-  mask-image: linear-gradient(to bottom, #000 calc(100% - 18px), transparent);
-}
-.block.scrolls.at-end { -webkit-mask-image: none; mask-image: none; }
-.block::-webkit-scrollbar { width: 6px; }
-.block::-webkit-scrollbar-track { background: transparent; }
-.block::-webkit-scrollbar-thumb { background: #2b3641; border-radius: 999px; }
-.block::-webkit-scrollbar-thumb:hover { background: #3d4b59; }
-.block .inner { position: relative; width: 100%; }
-
-/* One mapping.  The slot holds its place in the block; the box is what is
+/* One mapping.  The slot holds its place in the map; the box is what is
    painted, so a region can fade without its geometry jumping. */
 
 .slot {
@@ -394,7 +371,7 @@ button { font-family: inherit; }
 
 .box {
   position: absolute;
-  left: 0;
+  left: var(--gutter);
   right: 0;
   top: 0;
   height: 100%;
@@ -407,22 +384,25 @@ button { font-family: inherit; }
   cursor: pointer;
   border-top: 1px solid rgba(4, 7, 10, 0.55);
   border-left: 3px solid var(--blue);
-  background-color: var(--file-fill);
+  background-color: var(--ro-fill);
   transition: background-color .35s ease, box-shadow .4s ease, border-color .35s ease;
 }
 .box.joined-above { border-top: none; }
 
-.box.file { background-color: var(--file-fill); border-left-color: var(--blue); }
-.box.anon { background-color: var(--anon-fill); border-left-color: var(--anon-edge); }
-.box.special { background-color: var(--special-fill); border-left-color: var(--special-edge); }
+.box.ro { background-color: var(--ro-fill); border-left-color: var(--ro-edge); }
+.box.rw { background-color: var(--rw-fill); border-left-color: var(--rw-edge); }
+.box.rx { background-color: var(--rx-fill); border-left-color: var(--rx-edge); }
+.box.rwx { background-color: var(--rwx-fill); border-left-color: var(--rwx-edge); }
 .box.none {
   background-color: var(--none-fill);
   border-left-color: var(--none-edge);
   border-right: 1px dashed oklch(0.46 0.02 250);
 }
 
-/* Hatching is a background rather than an overlay, so it needs no element. */
-.box.exec {
+/* Hatching says the same thing as the colour, for anyone the colour does
+   not reach.  It is a background rather than an overlay, so it needs no
+   element of its own. */
+.box.rx, .box.rwx {
   background-image: repeating-linear-gradient(-45deg, rgba(255, 255, 255, 0.07) 0 1px, transparent 1px 7px);
 }
 .box.none {
@@ -442,9 +422,8 @@ button { font-family: inherit; }
   flex: none;
   align-items: baseline;
 }
-.box .box-perms { color: #93a0ad; letter-spacing: 0.08em; }
-.box .box-perms.writable { color: var(--sand); }
-.box .box-size { color: #737d87; letter-spacing: 0.04em; }
+.box .box-perms { color: #aab6c2; letter-spacing: 0.08em; }
+.box .box-size { color: #808b96; letter-spacing: 0.04em; }
 
 /* --------------------------------------------------------------------- */
 /* Event panel                                                            */
@@ -536,9 +515,10 @@ button { font-family: inherit; }
 }
 .legend span { display: flex; align-items: center; gap: 6px; }
 .swatch { width: 10px; height: 10px; border-radius: 3px; display: block; }
-.swatch.file { background: var(--file-fill); border-left: 2px solid var(--blue); }
-.swatch.anon { background: var(--anon-fill); border-left: 2px solid var(--anon-edge); }
-.swatch.special { background: var(--special-fill); border-left: 2px solid var(--special-edge); }
+.swatch.ro { background: var(--ro-fill); border-left: 2px solid var(--ro-edge); }
+.swatch.rw { background: var(--rw-fill); border-left: 2px solid var(--rw-edge); }
+.swatch.rx { background: var(--rx-fill); border-left: 2px solid var(--rx-edge); }
+.swatch.rwx { background: var(--rwx-fill); border-left: 2px solid var(--rwx-edge); }
 .swatch.none { background: var(--none-fill); border: 1px dashed oklch(0.48 0.02 250); border-left: 2px solid var(--none-edge); }
 
 /* --------------------------------------------------------------------- */

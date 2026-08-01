@@ -126,22 +126,22 @@ axis back some or all of its true proportions.
 A **block** is a contiguous stretch of memory behind one file -- or behind
 no file, which is a kind of backing too -- so libc and the loader beside it
 are two blocks rather than one long one, each named on its rail after what
-backs it.  The one thing that overrides the split is a mapping lying across
-it: a block is never cut where that would put one mapping in two of them.
+backs it *at the step being shown*.  The same addresses hold the loader,
+then nothing, then something else; a block is never named after what will be
+mapped there later.  The one thing that overrides the split is a mapping
+lying across it: a block is never cut where that would put one mapping into
+two of them.
 
-Two scales come out of the map being exactly one window tall.  The outer one
-hands that height to the blocks by size, and it is what the eye reads.  The
-inner one gives every mapping inside a block a readable line whatever its
-size -- so when a block holds more mappings than its share of the window has
-room for, the block scrolls, marked `⇕ n` on its rail.  Nothing is dropped to
-make things fit, and looking inside one block moves nothing outside it.  When
-even the floors do not fit, the unmapped stretches give way first: a hole is
-context, the mappings are the point.
+Every mapping gets a line it can be read on, so the map is as tall as it
+needs to be and the panel scrolls.  Stepping brings what changed into view,
+and leaves the map where you left it when nothing did.
 
-Blue is file-backed, brown anonymous, orange the kernel's own pages; a
-hatched box is executable, a dashed one has no access at all.  A file-backed
-region is named after the ELF section that fills most of it, which is what
-the `bias` in the JSON is for, and hovering one lists the rest.
+Colour is what may be done to the pages -- blue read-only, amber writable,
+violet executable, red both, a dashed grey box no access at all -- which is
+the same thing the four characters at the right of every mapping say.  A
+mapping is a range of pages rather than a section, so it is named after the
+largest section in it and how many others came with it, `.text +5`, with the
+file they came from left to the rail.
 
 Beside the map: the syscall that produced the step, the regions it changed,
 and the mapping under the pointer; then the whole trace; then the transport,

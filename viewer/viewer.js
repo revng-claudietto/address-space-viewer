@@ -65,11 +65,9 @@ var LOG_ROW = 25;          // must match --log-row in viewer.css
 var MS_PER_STEP = 900;
 var MAX_CHANGES = 24;      // a fork copies the lot; the list is not the point
 var MAX_TICKS = 320;       // as many ticks as the scrub bar can show apart
-var FLOOR_SHARE = 0.7;     // of the map's height that floors may take between them
 var GAP_FLOOR = 11;        // px an unmapped stretch keeps: enough to label it
-var BLOCK_ROW = 21;        // px a mapping inside a block always gets
-var FLOOR_ROWS = 3;        // rows of a block that fit before it has to scroll
-var MIN_SLOT = 3;          // px, when even the floors have to be squeezed
+var ROW = 21;              // px every mapping gets, so every one can be read
+var MIN_SLOT = 3;          // px, the floor a mapping can never go below
 
 // Which event speaks for a run of them, when one tick has to cover several.
 var TICK_RANK = ['exec', 'fork', 'exit', 'signal', 'unmap', 'remap', 'protect',
@@ -173,28 +171,30 @@ function sectionsIn(raw, objects) {
     var b = a + BigInt(sec.size || 0);
     if (b <= s || a >= e) continue;
     var lo = a > s ? a : s, hi = b < e ? b : e;
-    out.push({ name: sec.name, overlap: Number(hi - lo) });
+    out.push({ name: sec.name, at: a, overlap: Number(hi - lo) });
   }
-  out.sort(function (x, y) { return y.overlap - x.overlap; });
+  out.sort(function (x, y) { return x.at < y.at ? -1 : x.at > y.at ? 1 : 0; });
   return out;
 }
 
-function labelOf(r) {
+/* What a mapping holds, named without the file it comes from -- the block it
+   sits in is named after that.  A mapping is a range of pages rather than a
+   section, and usually holds several, so it is named after the largest and
+   says how many others came with it. */
+function whatIsIn(r) {
   if (r.name) return r.name;
-  var top = r.sections.length ? r.sections[0].name : null;
-  if (r.path) {
-    var base = basename(r.path);
+  if (r.object && r.offset === '0x0' && r.path) {
     // The first page of an ELF is its header and program headers, whatever
     // else the loader put in the same PT_LOAD.
-    if (r.object && r.offset === '0x0') return base + ' ELF headers';
-    return top ? base + ' ' + top : base;
+    return 'ELF headers' + (r.sections.length ? ' +' + r.sections.length : '');
   }
-  if (r.object) {
-    var owner = basename(r.object);
-    if (top) return owner + ' ' + top;
-    if (r.zero_fill) return owner + ' .bss';
-    return owner;
-  }
+  var top = null, best = -1;
+  r.sections.forEach(function (s) {
+    if (s.overlap > best) { best = s.overlap; top = s.name; }
+  });
+  if (top) return top + (r.sections.length > 1 ? ' +' + (r.sections.length - 1) : '');
+  if (r.zero_fill) return '.bss';
+  if (r.path) return basename(r.path);
   switch (r.kind) {
     case 'heap': return '[heap]';
     case 'stack': return '[stack]';
@@ -202,6 +202,12 @@ function labelOf(r) {
     case 'shadow-stack': return 'shadow stack';
     default: return 'anonymous';
   }
+}
+
+function labelOf(r) {
+  var owner = r.path ? basename(r.path) : r.object ? basename(r.object) : null;
+  if (!owner || owner === r.within || r.within.charAt(0) === '[') return r.within;
+  return owner + ' ' + r.within;
 }
 
 function makeRegion(raw, objects) {
@@ -213,6 +219,7 @@ function makeRegion(raw, objects) {
   r.blocked = r.perms.slice(0, 3) === '---';
   r.bucket = bucketOf(raw);
   r.sections = sectionsIn(raw, objects);
+  r.within = whatIsIn(r);
   r.label = labelOf(r);
   return r;
 }
@@ -395,51 +402,42 @@ function changesAt(model, i) {
 // to a fixed height -- the distance from the heap to the stack is real but
 // not interesting, and drawing it to scale leaves nothing else visible.
 //
-// The map as a whole is exactly the height of its panel.  Two scales come
-// out of that.  The outer one hands the panel out to contiguous blocks of
-// mapped memory by size, and it is what the eye reads.  The inner one gives
-// each mapping inside a block a readable line whatever its size, so a block
-// whose mappings want more room than the outer scale gave it holds them all
-// and scrolls.  Nothing is ever left out, and looking inside one block does
-// not move any of the others.
+// The map is at least as tall as its panel and as much taller as it needs to
+// be for every mapping to have a line it can be read on; the panel scrolls.
+//
+// A block is a contiguous stretch of memory behind one file -- or behind no
+// file, which is a kind of backing too -- so libc and the loader beside it
+// are two blocks rather than one long one.  The cut can only fall where no
+// mapping straddles it, or a mapping would belong to two blocks at once.
+// Splitting is a fact about addresses; naming a block is not, and is left to
+// whatever is mapped there at the step being shown.
 // --------------------------------------------------------------------------
 
 function computeLayout(model, sid, mode, H) {
   var inst = model.extents[sid] || [];
-  var bset = {}, i;
+  var bset = {}, i, k;
   for (i = 0; i < inst.length; i++) { bset[inst[i].start] = 1; bset[inst[i].end] = 1; }
   var bs = Object.keys(bset).sort(function (a, b) {
     var x = big(a), y = big(b);
     return x < y ? -1 : x > y ? 1 : 0;
   });
-  var lay = { mode: mode, H: H, runs: [], gaps: [], where: {}, total: H };
+  var lay = { mode: mode, H: H, pos: {}, runs: [], gaps: [], where: {}, total: H };
   if (bs.length < 2) return lay;
 
   var at = {};
-  bs.forEach(function (b, k) { at[b] = k; });
+  bs.forEach(function (b, j) { at[b] = j; });
   var covered = new Array(bs.length - 1);
-  for (i = 0; i < inst.length; i++) {
-    for (var k = at[inst[i].start]; k < at[inst[i].end]; k++) covered[k] = true;
-  }
-
-  // What backs each stretch, and where it is not allowed to be cut.  A block
-  // is contiguous memory behind one file -- or behind no file, which is a
-  // kind of backing too -- so libc and the loader beside it are two blocks
-  // rather than one long one.  The cut can only fall where no mapping
-  // straddles it, or a mapping would end up belonging to two blocks.
   var backing = new Array(bs.length - 1);
   var welded = {};
   for (i = 0; i < inst.length; i++) {
     var of = inst[i].object || inst[i].path || '';
     for (k = at[inst[i].start]; k < at[inst[i].end]; k++) {
+      covered[k] = true;
       if (!backing[k]) backing[k] = [];
       if (backing[k].indexOf(of) < 0) backing[k].push(of);
       if (k > at[inst[i].start]) welded[bs[k]] = true;
     }
   }
-  var keyOf = function (j) {
-    return backing[j] ? backing[j].slice().sort().join(' ') : '';
-  };
 
   var linear = mode === 'linear', log = mode === 'log';
   var exp = linear ? 1 : 0.42;
@@ -448,22 +446,22 @@ function computeLayout(model, sid, mode, H) {
     var size = Number(big(bs[i + 1]) - big(bs[i]));
     var w = Math.pow(size, exp);
     if (covered[i]) {
-      var key = keyOf(i);
+      var key = backing[i].slice().sort().join(' ');
       if (run && key !== was && !welded[bs[i]]) run = null;
       was = key;
       if (!run) {
-        run = { start: bs[i], end: bs[i + 1], min: BLOCK_ROW, w: 0, parts: [] };
-        items.push(run);
+        run = { start: bs[i], end: bs[i + 1], parts: [] };
         lay.runs.push(run);
       }
       run.end = bs[i + 1];
-      run.w += w;
-      run.parts.push({ addr: bs[i], next: bs[i + 1], size: size, w: w });
+      run.parts.push(bs[i]);
+      lay.where[bs[i]] = lay.runs.length - 1;
+      items.push({ addr: bs[i], min: ROW, w: w });
     } else {
       run = null;
       was = null;
       var gap = {
-        gap: true, size: size,
+        addr: bs[i], gap: true, size: size,
         min: linear ? 2 : log ? 14
           : 14 + Math.max(0, Math.min(22, Math.log2(size) - 20)),
         w: linear ? w : log ? w * 0.3 : 0
@@ -473,90 +471,26 @@ function computeLayout(model, sid, mode, H) {
     }
   }
 
-  // A block's floor is a few rows' worth, so a small object with four
-  // mappings does not have to be scrolled to be read while a large one is
-  // still sized by how large it is.
-  lay.runs.forEach(function (r) {
-    r.min = Math.min(r.parts.length, FLOOR_ROWS) * BLOCK_ROW;
-  });
-
-  // Enough floors would fill the panel on their own and leave every block
-  // the same height, which is the one thing the map is for.  They are held
-  // to a share of it, and the holes give way first: an unmapped stretch is
-  // context, the mappings are the point.
-  var floors = function (of) {
-    return of.reduce(function (s, it) { return s + it.min; }, 0);
-  };
-  var room = H * FLOOR_SHARE;
-  if (floors(items) > room) {
-    var spare = Math.max(0, room - floors(lay.runs));
-    var thinner = floors(lay.gaps) ? Math.min(1, spare / floors(lay.gaps)) : 1;
-    lay.gaps.forEach(function (g) { g.min = Math.max(GAP_FLOOR, g.min * thinner); });
-    if (floors(items) > room) {
-      var squeeze = room / floors(items);
-      items.forEach(function (it) { it.min = Math.max(MIN_SLOT, it.min * squeeze); });
-    }
-  }
-  var minTotal = floors(items);
+  var minTotal = items.reduce(function (s, it) { return s + it.min; }, 0);
   var weight = items.reduce(function (s, it) { return s + it.w; }, 0) || 1;
-  var k2 = Math.max(0, H - minTotal) / weight;
+  var spread = Math.max(0, H - minTotal) / weight;
 
   var y = 0;
-  items.forEach(function (it, index) {
-    it.top = y;
-    it.h = it.min + it.w * k2;
+  items.forEach(function (it) {
+    lay.pos[it.addr] = it.top = y;
+    it.h = it.min + it.w * spread;
     if (it.gap) it.labeled = it.h >= GAP_FLOOR && it.size >= 1048576;
-    // Two blocks that touch share an address; the gutter prints it once.
-    else it.chainEnd = !items[index + 1] || !!items[index + 1].gap;
     y += it.h;
   });
+  lay.pos[bs[bs.length - 1]] = y;
   lay.total = y;
 
   lay.runs.forEach(function (r, index) {
-    var sum = r.parts.reduce(function (s, p) { return s + p.w; }, 0) || 1;
-    var heights = r.parts.map(function (p) {
-      return Math.max(BLOCK_ROW, r.h * p.w / sum);
-    });
-    var inner = heights.reduce(function (s, h) { return s + h; }, 0);
-    // A block that wants a couple of pixels more than it has is not worth
-    // scrolling; give the rows back those pixels instead.
-    if (inner > r.h && inner <= r.h + BLOCK_ROW / 4) {
-      var fit = r.h / inner;
-      heights = heights.map(function (h) { return h * fit; });
-      inner = r.h;
-    }
-    var y2 = 0;
-    r.pos = {};
-    r.parts.forEach(function (p, j) {
-      r.pos[p.addr] = y2;
-      y2 += heights[j];
-      lay.where[p.addr] = index;
-    });
-    r.pos[r.end] = inner;
-    r.content = inner;
-    r.scrolls = inner > r.h + 1;
-
-    // A block is named after what backs it, which now needs no guessing.
-    // Only a block backed by nothing has to be named from its mappings --
-    // [heap], [stack], [vvar] + [vdso], or just anonymous.
-    var files = [];
-    r.parts.forEach(function (p) {
-      (backing[at[p.addr]] || []).forEach(function (f) {
-        if (f && files.indexOf(f) < 0) files.push(f);
-      });
-    });
-    if (files.length) {
-      r.title = files.map(basename).slice(0, 2).join(' + ');
-      return;
-    }
-    var a = big(r.start), b = big(r.end), names = [];
-    for (var j = 0; j < inst.length; j++) {
-      var x = inst[j];
-      if (x._s < a || x._e > b) continue;
-      var n = (/^\[[^\]]+\]/.exec(x.label) || [null])[0] || x.label;
-      if (n && names.indexOf(n) < 0) names.push(n);
-    }
-    r.title = names.slice(0, 2).join(' + ');
+    r.top = lay.pos[r.start];
+    r.h = lay.pos[r.end] - r.top;
+    // Two blocks that touch share an address; the gutter prints it once.
+    var next = lay.runs[index + 1];
+    r.chainEnd = !next || next.start !== r.end;
   });
   return lay;
 }
@@ -581,6 +515,7 @@ var state = {
 };
 
 var slots = {};            // region id -> the nodes that draw it
+var rails = [];            // one per block, in the gutter
 var drawnLayout = null;    // what the map is currently drawn from
 var drawnSpace = null;
 var logRows = [];
@@ -1046,57 +981,36 @@ function drawMap(sid, lay) {
     canvas.appendChild(node);
   });
 
-  var inners = lay.runs.map(function (r) {
+  rails = lay.runs.map(function (r) {
     var tall = r.h >= 34;
     var rail = el('div', 'run');
     rail.style.top = r.top + 'px';
     rail.style.height = r.h + 'px';
     rail.appendChild(el('span', 'rail'));
     rail.appendChild(el('span', 'addr top', shortAddr(r.start)));
-    var title = el('span', 'run-title', r.title || '');
+    var title = el('span', 'run-title');
     title.style.fontSize = (tall ? 11 : 10) + 'px';
     if (r.h < 20) title.style.opacity = '0';
     rail.appendChild(title);
     var bottom = el('span', 'addr bottom', shortAddr(r.end));
     if (!tall || !r.chainEnd) bottom.style.opacity = '0';
     rail.appendChild(bottom);
-    if (r.scrolls && r.h >= 40) {
-      rail.appendChild(el('span', 'more', '⇕ ' + r.parts.length));
-    }
     canvas.appendChild(rail);
-
-    var block = el('div', 'block' + (r.scrolls ? ' scrolls' : ''));
-    block.style.top = r.top + 'px';
-    block.style.height = r.h + 'px';
-    if (r.scrolls) {
-      block.title = r.parts.length + ' mappings in ' +
-        fmtSize(Number(big(r.end) - big(r.start))) + ' — scroll to see them all';
-      // The fade at the foot of a block says there is more below it, so it
-      // goes away once there is not.
-      block.addEventListener('scroll', function () {
-        block.classList.toggle('at-end',
-          block.scrollTop + block.clientHeight >= block.scrollHeight - 1);
-      });
-    }
-    var inner = el('div', 'inner');
-    inner.style.height = Math.round(r.content) + 'px';
-    block.appendChild(inner);
-    canvas.appendChild(block);
-    return inner;
+    return { node: rail, title: title };
   });
 
   var first = state.model.firstSeen[sid] || {};
   Object.keys(first).forEach(function (id) {
-    var where = lay.where[first[id].start];
-    if (where === undefined) return;
     var slot = el('div', 'slot');
     var box = el('div', 'box');
     var label = el('span', 'box-label');
     var meta = el('span', 'box-meta');
-    var perms = el('span', 'box-perms');
     var size = el('span', 'box-size');
-    meta.appendChild(perms);
+    var perms = el('span', 'box-perms');
+    // Size first: the permissions are four characters wide whatever they
+    // say, so keeping them last keeps the column straight.
     meta.appendChild(size);
+    meta.appendChild(perms);
     box.appendChild(label);
     box.appendChild(meta);
     slot.appendChild(box);
@@ -1116,9 +1030,45 @@ function drawMap(sid, lay) {
       updateMap();
       renderDetail();
     });
-    inners[where].appendChild(slot);
+    canvas.appendChild(slot);
     slots[id] = { slot: slot, box: box, label: label,
-                  perms: perms, size: size, shown: null };
+                  perms: perms, size: size, shown: null, short: null };
+  });
+}
+
+/* What a mapping may be done to, which is what colours it. */
+function permClass(r) {
+  if (r.blocked) return 'none';
+  var w = r.perms[1] === 'w', x = r.perms[2] === 'x';
+  return x ? (w ? 'rwx' : 'rx') : (w ? 'rw' : 'ro');
+}
+
+/* Bring what just changed into view, and only if it is not already there.
+   A step that changes nothing leaves the map where the reader left it. */
+function focusChanges(ids) {
+  var box = $('map-scroll');
+  if (!ids.length || box.scrollHeight <= box.clientHeight) return;
+  var top = Infinity, bottom = -Infinity, frame = box.getBoundingClientRect();
+  ids.forEach(function (id) {
+    var node = slots[id];
+    if (!node) return;
+    var at = node.slot.getBoundingClientRect();
+    top = Math.min(top, at.top - frame.top + box.scrollTop);
+    bottom = Math.max(bottom, at.bottom - frame.top + box.scrollTop);
+  });
+  if (top === Infinity) return;
+
+  var margin = 28;
+  var view = box.clientHeight, seen = box.scrollTop;
+  var want = seen;
+  if (bottom - top > view - 2 * margin) want = top - margin;      // taller than the panel
+  else if (top - margin < seen) want = top - margin;              // above what is shown
+  else if (bottom + margin > seen + view) want = bottom + margin - view;
+  if (Math.abs(want - seen) < 2) return;
+  box.scrollTo({
+    top: Math.max(0, Math.min(want, box.scrollHeight - view)),
+    behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      ? 'auto' : 'smooth'
   });
 }
 
@@ -1126,7 +1076,8 @@ function updateMap() {
   var model = state.model, sid = state.space;
   if (!sid || !model.frames[sid]) return;
   var lay = layoutFor(sid);
-  if (lay !== drawnLayout || sid !== drawnSpace) {
+  var redrawn = lay !== drawnLayout || sid !== drawnSpace;
+  if (redrawn) {
     drawnLayout = lay;
     drawnSpace = sid;
     drawMap(sid, lay);
@@ -1139,10 +1090,35 @@ function updateMap() {
   cur.forEach(function (r) { byId[r.id] = r; });
   prev.forEach(function (r) { wasById[r.id] = r; });
 
-  var marks = {};
+  var marks = {}, changed = [];
   if (model.events[state.idx].space === sid) {
-    model.changesAt(state.idx).forEach(function (c) { marks[c.id] = c.type; });
+    model.changesAt(state.idx).forEach(function (c) {
+      marks[c.id] = c.type;
+      changed.push(c.id);
+    });
   }
+
+  // What is mapped in each block right now.  A block is not named after what
+  // will be there later: the same addresses hold the loader, then nothing,
+  // then something else, and each of those is what it is at the time.
+  var here = lay.runs.map(function () { return { files: [] }; });
+  cur.forEach(function (r) {
+    var run = here[lay.where[r.start]];
+    var f = r.object || r.path;
+    if (run && f && run.files.indexOf(f) < 0) run.files.push(f);
+  });
+  here.forEach(function (run, i) {
+    // Only the backing goes on the rail.  A block behind no file is named
+    // by its own mappings -- [heap], [stack] -- and saying it twice is worse
+    // than saying it once.
+    run.title = run.files.map(basename).slice(0, 2).join(' + ');
+    // Only where one file backs everything on screen can a mapping drop the
+    // file from its own name without becoming ambiguous.
+    run.short = run.files.length === 1;
+    if (!rails[i]) return;
+    rails[i].title.textContent = run.title;
+    rails[i].node.classList.toggle('empty', !run.title);
+  });
 
   // Two mappings are drawn as one run of colour when they touch -- but only
   // inside a block, so where one block ends and the next begins is visible.
@@ -1163,9 +1139,8 @@ function updateMap() {
     var r = liveHere || wasById[id] || first[id];
     if (liveHere && !r.blocked) totalBytes += r.size;
 
-    var run = lay.runs[lay.where[r.start]];
-    var top = run ? run.pos[r.start] : 0;
-    var bottom = run ? run.pos[r.end] : undefined;
+    var top = lay.pos[r.start] || 0;
+    var bottom = lay.pos[r.end];
     var h = Math.max(MIN_SLOT, (bottom === undefined ? top : bottom) - top);
     node.slot.style.top = top + 'px';
     node.slot.style.height = h + 'px';
@@ -1176,8 +1151,7 @@ function updateMap() {
 
     var radius = h < 15 ? 5 : 11;
     var above = joinAbove[id] ? 0 : radius, below = joinBelow[id] ? 0 : radius;
-    node.box.className = 'box ' + (r.blocked ? 'none' : r.bucket) +
-      (!r.blocked && r.perms[2] === 'x' ? ' exec' : '') +
+    node.box.className = 'box ' + permClass(r) +
       (joinAbove[id] ? ' joined-above' : '');
     node.box.style.borderRadius = above + 'px ' + above + 'px ' +
       below + 'px ' + below + 'px';
@@ -1186,13 +1160,15 @@ function updateMap() {
       ? 'inset 0 0 0 1px ' + CHANGE[mark].c + ', 0 0 24px -4px ' + CHANGE[mark].c
       : picked === id ? 'inset 0 0 0 1px #8a97a4' : 'none';
 
-    if (node.shown !== r) {
+    var run = here[lay.where[r.start]];
+    var short = !!(run && run.short && liveHere);
+    if (node.shown !== r || node.short !== short) {
       node.shown = r;
-      node.label.textContent = r.label;
+      node.short = short;
+      node.label.textContent = short ? r.within : r.label;
       node.perms.textContent = r.perms;
-      node.perms.className = 'box-perms' + (r.perms[1] === 'w' ? ' writable' : '');
       node.size.textContent = fmtSize(r.size);
-      node.box.title = r.label + '  ' + r.perms + '  ' + fmtSize(r.size);
+      node.box.title = r.label + '  ' + fmtSize(r.size) + '  ' + r.perms;
     }
   });
 
@@ -1201,6 +1177,9 @@ function updateMap() {
     model.events[state.idx].seq >= info.destroyed_by;
   $('map-counts').textContent = cur.length + ' MAPPINGS · ' +
     fmtSize(totalBytes) + ' MAPPED' + (ended ? ' · SPACE ENDED' : '');
+
+  if (redrawn) $('map-scroll').scrollTop = 0;
+  focusChanges(changed);
 }
 
 // --------------------------------------------------------------------------
@@ -1337,7 +1316,7 @@ function noteFor(i) {
     bits.push(ev.summary + '.');
   }
 
-  if (ev.delayed && ev.kindKey === 'exec') {
+  if (ev.delayed && ev.kindKey === 'exec' && ev.ok !== false) {
     bits.push('strace held the process here so its map could be read; the pause ' +
       'is taken back out of t.');
   }
@@ -1456,7 +1435,7 @@ function renderDetail() {
   if (r.object && r.object !== r.path) row('object', r.object);
   if (r.bias) row('bias', r.bias);
   if (r.sections && r.sections.length) {
-    row('sections', r.sections.map(function (s) { return s.name; }).join(' '));
+    row('holds', r.sections.map(function (s) { return s.name; }).join(' '));
   }
   if (r.flags && r.flags.length) row('flags', r.flags.join(' '));
   if (r.sealed) row('sealed', 'yes — mseal, cannot be changed again');
@@ -1605,14 +1584,18 @@ function start() {
   });
 
   document.addEventListener('keydown', function (e) {
-    // A focused button already answers to Space and Enter on its own.
-    if (e.target && /^(INPUT|TEXTAREA|BUTTON)$/.test(e.target.tagName)) return;
+    var typing = e.target && /^(INPUT|TEXTAREA)$/.test(e.target.tagName);
+    if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
+    // The arrows step wherever the focus happens to be -- including on a
+    // button, which they do nothing else with.
     if (e.key === 'ArrowRight') { step(1); e.preventDefault(); }
     else if (e.key === 'ArrowLeft') { step(-1); e.preventDefault(); }
     else if (e.key === 'Home') { setPlaying(false); go(0); e.preventDefault(); }
     else if (e.key === 'End' && state.model) {
       setPlaying(false); go(state.model.events.length - 1); e.preventDefault();
     } else if (e.key === ' ') {
+      // Space is how a focused button is pressed; leave it to the button.
+      if (e.target && e.target.tagName === 'BUTTON') return;
       if (state.model) setPlaying(!state.playing);
       e.preventDefault();
     } else if (e.key === 'Escape') { panel.hidden = true; dismissStartup(); }
