@@ -180,6 +180,13 @@ function sectionsIn(raw, objects) {
   for (var i = 0; i < obj.sections.length; i++) {
     var sec = obj.sections[i];
     if (!sec.flags || sec.flags.indexOf('A') < 0) continue;   // never mapped
+    // .tbss takes up no room in the image: it is the zero part of the thread
+    // template, its address is only where a thread's copy would continue
+    // after .tdata, and the linker lays the next section out over it.  The
+    // bytes there are that next section's, and the thread's own block is
+    // somewhere else entirely -- so this is the one allocated section that
+    // is not at the address it says.
+    if (sec.type === 'SHT_NOBITS' && sec.flags.indexOf('T') >= 0) continue;
     var a = big(sec.addr);
     if (a === null) continue;
     a += bias;
