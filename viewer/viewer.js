@@ -94,6 +94,18 @@ function basename(path) {
   return parts[parts.length - 1] || String(path);
 }
 
+/* What to call the file behind a block.  A library is really known by its
+   SONAME -- that is what a program asks for and what the loader records --
+   while the file is only where a copy of it was found.  The two nearly always
+   agree; where they do not, which library this is is worth saying, so the
+   name inside the file follows the name of the file. */
+function nameOf(file, objects) {
+  var name = basename(file);
+  var obj = objects ? objects[file] : null;
+  if (obj && obj.soname && obj.soname !== name) return name + ' (' + obj.soname + ')';
+  return name;
+}
+
 function shortAddr(s) {
   if (!s) return '—';
   var out = String(s).replace(/^0x0+/, '0x');
@@ -1149,7 +1161,9 @@ function updateMap() {
     // Only the backing goes on the rail.  A block behind no file is named
     // by its own mappings -- [heap], [stack] -- and saying it twice is worse
     // than saying it once.
-    run.title = run.files.map(basename).slice(0, 2).join(' + ');
+    run.title = run.files.map(function (f) {
+      return nameOf(f, model.doc.objects);
+    }).slice(0, 2).join(' + ');
     // Only where one file backs everything on screen can a mapping drop the
     // file from its own name without becoming ambiguous.
     run.short = run.files.length === 1;
@@ -1468,9 +1482,15 @@ function renderDetail() {
     : r.bucket === 'special' ? 'kernel-managed'
     : r.zero_fill ? 'anonymous (a PT_LOAD’s .bss)'
     : 'anonymous (zero-fill)');
-  row('path', r.path || '—');
+  // The SONAME, where the file is not already called that: this is the name
+  // the loader looked the library up by, and the file is where it found it.
+  var obj = (state.model.doc.objects || {})[r.object];
+  var soname = obj && obj.soname && obj.soname !== basename(r.object)
+    ? ' (' + obj.soname + ')' : '';
+  var named = r.object && r.object !== r.path;      // where the soname goes
+  row('path', r.path ? r.path + (named ? '' : soname) : '—');
   if (r.path) row('offset', r.offset);
-  if (r.object && r.object !== r.path) row('object', r.object);
+  if (named) row('object', r.object + soname);
   if (r.bias) row('bias', r.bias);
   if (r.sections && r.sections.length) {
     row('holds', r.sections.map(function (s) { return s.name; }).join(' '));
