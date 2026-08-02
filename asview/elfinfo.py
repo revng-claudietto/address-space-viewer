@@ -17,6 +17,7 @@ the `objects` section of the output.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from .space import Desc, page_down
@@ -57,7 +58,7 @@ class Library:
             obj = self._object(desc.path)
             if obj is None:
                 return {}
-            bias = _bias(obj, desc.offset, desc.start)
+            bias = _bias(obj, desc.offset, desc.start, _image(desc, layout))
             return {} if bias is None else {"object": _key(desc.path), "bias": hex(bias)}
         return self._bss(desc, layout)
 
@@ -70,7 +71,7 @@ class Library:
             obj = self._object(d.path)
             if obj is None:
                 continue
-            bias = _bias(obj, d.offset, d.start)
+            bias = _bias(obj, d.offset, d.start, _image(d, layout))
             if bias is None:
                 continue
             for _, filesz, vaddr, memsz in obj.loads:
@@ -114,7 +115,15 @@ def _key(path: str) -> str:
     return path.removesuffix(" (deleted)")
 
 
-def _bias(obj: _Object, offset: int, start: int) -> int | None:
+def _image(desc: Desc, layout: list[Desc]) -> list[tuple[int, int]]:
+    """The other windows onto the same file, as (offset, address) pairs."""
+    key = _key(desc.path or "")
+    return [(d.offset, d.start) for d in layout
+            if d.path and d.start != desc.start and _key(d.path) == key]
+
+
+def _bias(obj: _Object, offset: int, start: int,
+          image: Sequence[tuple[int, int]] = ()) -> int | None:
     """Where the object's address zero sits, given one of its windows.
 
     The kernel maps a PT_LOAD from page_down(p_offset) at page_down(p_vaddr),
@@ -122,19 +131,40 @@ def _bias(obj: _Object, offset: int, start: int) -> int | None:
     which are not page aligned, and whose skew between offset and vaddr is
     what a linker's `-z separate-code` layout introduces.
 
-    Two segments can share one file page, and then two of them contain the
-    same offset; the later one owns the page in the mapping that starts there,
-    so the candidate with the highest base offset wins.
+    That skew is why a file offset alone does not say where a window is: the
+    last page of the read-only segment and the first page of the writable one
+    are the same bytes of the file, mapped twice, one page apart, so both
+    segments answer for the offset and each gives a bias a page from the
+    other's.  Which of them a window is shows in the rest of the image, where
+    the wrong bias puts every other window a page from where it really is:
+    the candidates are scored by how many of the object's other windows they
+    agree with.  An object seen through a single window has nothing to score
+    against and keeps the older rule, the segment with the highest base
+    offset -- the one that owns the page in a mapping that starts there.
     """
-    best: tuple[int, int] | None = None
+    best: tuple[int, int, int] | None = None
+    for base_offset, base_vaddr in _segments_at(obj, offset):
+        bias = start - (base_vaddr + (offset - base_offset))
+        agree = sum(1 for o, s in image if _agrees(obj, o, s, bias))
+        if best is None or (agree, base_offset) > (best[0], best[1]):
+            best = (agree, base_offset, bias)
+    return None if best is None else best[2]
+
+
+def _segments_at(obj: _Object, offset: int) -> list[tuple[int, int]]:
+    """The page-aligned (file, memory) bases of the loads holding an offset."""
+    out = []
     for p_offset, filesz, vaddr, _ in obj.loads:
         base_offset, base_vaddr = page_down(p_offset), page_down(vaddr)
         if base_offset <= offset < max(p_offset + filesz, base_offset + 1):
-            if best is None or base_offset > best[0]:
-                best = (base_offset, base_vaddr)
-    if best is None:
-        return None
-    return start - (best[1] + (offset - best[0]))
+            out.append((base_offset, base_vaddr))
+    return out
+
+
+def _agrees(obj: _Object, offset: int, start: int, bias: int) -> bool:
+    """Whether a window at `start` onto `offset` can belong to that bias."""
+    return any(start - (base_vaddr + (offset - base_offset)) == bias
+               for base_offset, base_vaddr in _segments_at(obj, offset))
 
 
 def _describe(elf: "ELFFile", path: str, all_sections: bool) -> _Object:

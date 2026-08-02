@@ -580,6 +580,32 @@ class Elf(unittest.TestCase):
                          base - space.page_down(vaddr))
 
     @unittest.skipUnless(elfinfo.HAVE_PYELFTOOLS, "pyelftools is not installed")
+    def test_one_bias_for_every_window_onto_an_image(self):
+        """The last file page of the read-only segment is also the first of
+        the writable one, mapped a page higher.  Both windows name the same
+        file offset, so the offset alone cannot say which segment a window
+        is -- and answering the wrong one puts every section it holds a page
+        from where it really is.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            path = build_demo(tmp)
+            if path is None:
+                self.skipTest("nothing to compile the demo with")
+            library = elfinfo.Library()
+            obj = library._object(path)
+            base = 0x7F0000000000
+            image = [Desc(start=base + space.page_down(vaddr),
+                          end=base + space.page_up(vaddr + filesz),
+                          prot=1, path=path, offset=space.page_down(p_offset),
+                          kind="file")
+                     for p_offset, filesz, vaddr, _ in obj.loads]
+            self.assertLess(len({w.offset for w in image}), len(image),
+                            "the demo is meant to share a file page")
+            for window in image:
+                self.assertEqual(int(library.annotate(window, image)["bias"], 16),
+                                 base)
+
+    @unittest.skipUnless(elfinfo.HAVE_PYELFTOOLS, "pyelftools is not installed")
     def test_only_allocated_sections_by_default(self):
         path = os.path.realpath(sys.executable)
         names = {s["name"] for s in elfinfo.Library()._object(path).json["sections"]}
