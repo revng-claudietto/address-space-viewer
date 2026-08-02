@@ -167,9 +167,9 @@ function bucketOf(raw) {
   }
 }
 
-/* The ELF sections that fall inside a mapping, biggest overlap first.  A
-   section lands at `bias + addr` of the region that names the object, which
-   is the whole reason as-trace reports a bias at all. */
+/* The ELF sections that fall inside a mapping, in the order they are in
+   memory.  A section lands at `bias + addr` of the region that names the
+   object, which is the whole reason as-trace reports a bias at all. */
 function sectionsIn(raw, objects) {
   if (!raw.object || !raw.bias || !objects) return [];
   var obj = objects[raw.object];
@@ -193,11 +193,10 @@ function sectionsIn(raw, objects) {
 }
 
 /* What a mapping holds, named without the file it comes from -- the block it
-   sits in is named after that.  A mapping usually holds several sections
-   and all of them are named, on one line, the one that fills most of the
-   range first -- so that what the range mostly is survives being cut off
-   at the width of the box.  The detail panel lists them in the order they
-   are in memory instead, where there is room for all of them.
+   sits in is named after that.  A mapping usually holds several sections and
+   all of them are named, on one line, in the order they are in memory: the
+   line then reads the way the range is laid out, and a name cut off at the
+   width of the box was going to be one of the last ones anyway.
 
    The ELF header and the program headers sit at the object's base address
    and are in no section, so a range holding that address and mostly not
@@ -212,12 +211,10 @@ function whatIsIn(r) {
     accounted += s.overlap;
     if (s.overlap > best) best = s.overlap;
   });
-  var named = r.sections.slice()
-    .sort(function (x, y) { return y.overlap - x.overlap; })
-    .map(function (s) { return s.name; });
+  var named = r.sections.map(function (s) { return s.name; });
   if (r.holdsBase && named.length && r.size - accounted > best) {
     // The header and the program headers are in no section and are most of
-    // what this range is; the sections that came with them follow.
+    // what this range is; they are at the base, so they come first here too.
     return ['ELF headers'].concat(named).join(' ');
   }
   if (named.length) return named.join(' ');
