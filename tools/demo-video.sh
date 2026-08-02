@@ -8,12 +8,17 @@
 # Usage: tools/demo-video.sh [OUTPUT-DIRECTORY]
 # Needs: a C compiler, one of the two backends, playwright with a browser,
 # and ffmpeg for anything but .webm.
+#
+# The knobs are VIDEO_SIZE, MS, HOLD, FPS and the LOOP_ ones for the README
+# animation.  VIDEO_SIZE rather than SIZE because a nix development shell
+# exports SIZE, pointing at binutils' `size`, and a video 'size' wide is not
+# a video.
 
 set -eu
 
 here=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 out=${1:-$here/out}
-size=${SIZE:-1600x900}
+size=${VIDEO_SIZE:-1600x900}
 backend=${BACKEND:-strace}
 
 scratch=$(mktemp -d)
