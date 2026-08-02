@@ -34,11 +34,20 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(body)
             return
         super().do_GET()
+
+    def end_headers(self) -> None:
+        # Everything here is a file on disk being worked on, and none of it
+        # may be remembered.  Without this the page and its script go out
+        # with only a Last-Modified, which lets a browser decide for itself
+        # how long they stay fresh -- and it decides in proportion to how old
+        # the file is, so an edit to a file that had not changed in a while
+        # is the one least likely to be asked for again.
+        self.send_header("Cache-Control", "no-store")
+        super().end_headers()
 
     def log_message(self, *args) -> None:
         pass                        # the page is not a web site
